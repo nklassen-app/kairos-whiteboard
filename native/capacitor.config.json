@@ -1,0 +1,12 @@
+{
+  "appId": "app.nklassen.whiteboard",
+  "appName": "Whiteboard",
+  "webDir": "www",
+  "server": {
+    "url": "https://nklassen-app.github.io/kairos-whiteboard/",
+    "allowNavigation": ["nklassen-app.github.io"]
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#f6f7f5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Whiteboard">
+<title>Whiteboard</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+  :root{
+    --board:#f6f7f5;
+    --edge:#d3d6d1;
+    --ink:#000000;
+    --graphite:#5a6067;
+    --blue:#1b54b8;
+    --red:#d5322b;
+    --green:#1f7a4c;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--board);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.4;
+    padding:20px 16px 56px;
+  }
+  .wrap{max-width:520px;margin:0 auto;}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:22px;}
+  h1{font-size:21px;font-weight:650;letter-spacing:-.3px;margin:0;}
+  .count{font-size:14px;font-weight:600;color:var(--graphite);font-variant-numeric:tabular-nums;}
+  .count.full{color:var(--red);}
+
+  section{margin-bottom:34px;}
+  h2{font-size:13px;font-weight:650;color:var(--graphite);margin:0 0 10px;letter-spacing:.1px;}
+
+  .board{border:1.5px solid var(--edge);border-radius:10px;background:#fff;padding:4px 0;}
+  .board.empty{padding:22px 16px;color:var(--graphite);font-size:14px;border-style:dashed;}
+
+  .row{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;}
+  .row + .row{border-top:1px solid #ecefea;}
+  .task{flex:1;font-size:16px;word-break:break-word;padding-top:1px;}
+
+  .box{
+    width:23px;height:23px;flex:none;margin-top:1px;border:2px solid var(--ink);
+    border-radius:4px;background:#fff;cursor:pointer;padding:0;position:relative;
+  }
+  .box svg{position:absolute;inset:-3px;width:29px;height:29px;stroke:var(--green);
+    stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;
+    stroke-dasharray:32;stroke-dashoffset:32;}
+  .done .box{border-color:var(--graphite);}
+  .done .box svg{stroke-dashoffset:0;transition:stroke-dashoffset .22s ease-out;}
+  .done .task{color:var(--graphite);text-decoration:line-through;text-decoration-color:#b9bdb7;}
+  .done{opacity:.35;transition:opacity .25s ease-out .2s;}
+  .task{cursor:text;}
+  .edit{
+    flex:1;min-width:0;font:inherit;font-size:16px;padding:0;margin:0;border:none;border-bottom:1.5px solid var(--ink);
+    background:transparent;color:var(--ink);border-radius:0;
+  }
+  .edit:focus{outline:none;border-color:var(--ink);}
+  .backlog .edit{font-size:15px;}
+
+  .push{
+    flex:none;border:1.5px solid var(--blue);color:var(--blue);background:#fff;
+    font:inherit;font-size:13px;font-weight:600;border-radius:6px;padding:5px 11px;cursor:pointer;
+  }
+  .push:disabled{border-color:var(--edge);color:#adb2ac;cursor:not-allowed;}
+
+  .capture{display:flex;gap:8px;margin-bottom:12px;}
+  input{
+    flex:1;font:inherit;font-size:16px;padding:11px 13px;background:#fff;
+    border:1.5px solid var(--edge);border-radius:8px;color:var(--ink);
+  }
+  input:focus{outline:none;border-color:var(--ink);}
+  .add{border:none;background:var(--ink);color:#fff;font:inherit;font-size:15px;font-weight:600;
+    border-radius:8px;padding:0 16px;cursor:pointer;}
+
+  .backlog .row{padding:11px 2px;}
+  .backlog .row + .row{border-top:1px solid #e6e9e4;}
+  .backlog .task{font-size:15px;}
+  .note{font-size:13px;color:var(--graphite);margin:10px 2px 0;}
+  .saving{font-size:12px;color:var(--graphite);}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Whiteboard</h1>
+    <span class="count" id="count"></span>
+  </header>
+
+  <section>
+    <h2>Now</h2>
+    <div class="board" id="active"></div>
+  </section>
+
+  <section class="backlog">
+    <h2>Backlog</h2>
+    <div class="capture">
+      <input id="field" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
+      <button class="add" id="add" type="button">Add</button>
+    </div>
+    <div id="backlog"></div>
+    <p class="note" id="status"></p>
+  </section>
+</div>
+
+<script>
+const KEY = 'whiteboard:v1';
+let state = { active: [], backlog: [] };
+
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const openCount = () => state.active.length;
+
+async function load(){
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) state = JSON.parse(raw);
+  } catch (e) {
+    $('status').textContent = 'Starting a fresh board.';
+  }
+  render();
+}
+
+async function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    $('status').textContent = '';
+  } catch (e) {
+    $('status').textContent = 'Not saved — this browser is blocking storage.';
+  }
+}
+
+function render(){
+  const n = openCount();
+  const c = $('count');
+  c.textContent = n + ' / 7';
+  c.classList.toggle('full', n >= 7);
+
+  const a = $('active');
+  if (!state.active.length){
+    a.className = 'board empty';
+    a.textContent = 'Nothing here. Push something up from the backlog.';
+  } else {
+    a.className = 'board';
+    a.innerHTML = state.active.map(t => `
+      <div class="row" data-row="${t.id}">
+        <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
+          <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
+        </button>
+        <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+      </div>`).join('');
+  }
+
+  const b = $('backlog');
+  b.innerHTML = state.backlog.length
+    ? state.backlog.map(t => `
+      <div class="row" data-row="${t.id}">
+        <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+        <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
+      </div>`).join('')
+    : '<p class="note">Empty.</p>';
+}
+
+function add(){
+  const field = $('field');
+  const text = field.value.trim();
+  if (!text) return;
+  state.backlog.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text });
+  field.value = '';
+  field.focus();
+  render(); save();
+}
+
+function findTask(id){
+  return state.active.find(t => t.id === id) || state.backlog.find(t => t.id === id);
+}
+
+// Tap a task's text to edit it in place. Enter or tapping away saves; Escape
+// or an empty field leaves the original text untouched. Editing never deletes.
+function startEdit(span){
+  const t = findTask(span.dataset.edit);
+  const input = document.createElement('input');
+  input.className = 'edit';
+  input.value = t.text;
+  input.setAttribute('aria-label', 'Edit task');
+  let finished = false;
+  const finish = commit => {
+    if (finished) return;
+    finished = true;
+    const text = input.value.trim();
+    if (commit && text && text !== t.text){ t.text = text; save(); }
+    render();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter'){ e.preventDefault(); finish(true); }
+    if (e.key === 'Escape'){ e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  span.replaceWith(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+// Ticking a task is completion: the tick draws, the row fades, and the task
+// is gone for good. There is no undo and no archive.
+function complete(id){
+  const row = document.querySelector(`[data-row="${id}"]`);
+  row.classList.add('done');
+  row.querySelector('[data-done]').disabled = true;
+  setTimeout(() => {
+    state.active = state.active.filter(t => t.id !== id);
+    render(); save();
+  }, 480);
+}
+
+$('add').addEventListener('click', add);
+$('field').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); add(); }
+});
+
+document.addEventListener('click', e => {
+  const push = e.target.closest('[data-push]');
+  if (push && openCount() < 7){
+    const i = state.backlog.findIndex(t => t.id === push.dataset.push);
+    const [t] = state.backlog.splice(i, 1);
+    state.active.push(t);
+    render(); save();
+    return;
+  }
+  const done = e.target.closest('[data-done]');
+  if (done && !done.disabled){ complete(done.dataset.done); return; }
+  const edit = e.target.closest('[data-edit]');
+  if (edit) startEdit(edit);
+});
+
+load();
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>
