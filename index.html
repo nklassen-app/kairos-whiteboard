@@ -242,8 +242,15 @@ document.addEventListener('click', e => {
 });
 
 load();
+// updateViaCache:'none' keeps the HTTP cache out of sw.js checks, and every
+// return to the foreground forces one — belt and braces for WebViews that
+// skip the automatic re-check.
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js');
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') reg.update();
+    });
+  });
 }
 </script>
 </body>
