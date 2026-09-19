@@ -42,7 +42,7 @@ This system is deliberately biased toward creative velocity and tolerates mess. 
 - Anything that would build weight for a tier this app hasn't earned.
 - Adding a new dependency (each one is a potential egress channel — flag it, don't add silently).
 
-## Phone apps (the Floor pattern: kairos-floor, kairos-whiteboard)
+## Phone apps (the Floor pattern: kairos-floor, kairos-whiteboard, kairos-domus)
 - The APK is build output and is **never in the repo** (`*.apk` is ignored; commit code, not generated files). That is expected, not a gap.
 - Content changes ship by pushing the page (bump the `sw.js` cache name). No APK step.
 - **Shell changes (icon, app name, `capacitor.config.json`, Capacitor upgrade) need a rebuild, and the rebuilt APK must reach the phone by hand.** Claude's last step in any session that rebuilt an APK: send `native/android/app/build/outputs/apk/debug/app-debug.apk` as a file card and say plainly "new APK — put it in Drive, open it on the phone, install over the top". Never uninstall or clear data first: the WebView's localStorage is the only copy of the board.
