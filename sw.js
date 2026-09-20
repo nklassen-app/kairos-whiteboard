@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v1';
+const CACHE = 'whiteboard-v2';   // days on Now + copy   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

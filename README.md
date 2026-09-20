@@ -19,6 +19,13 @@ The Floor (`kairos-floor`).
 5. No delete, no demote, no reorder, no priority.
 6. State is one JSON document in `localStorage` under `whiteboard:v1`, on one
    device. No backup, no sync.
+7. A task on Now shows, at the right of its row, how long it has been there
+   (today · 1 day · N days), counted from the moment it was pushed up. Tasks
+   that were on Now before this existed count from their first load after
+   the update.
+8. Every row has a **copy** button: it puts the task's text on the clipboard
+   to paste elsewhere — into Claude, to plan or resolve it. A task on Now
+   copies with a second line saying how long it has been there.
 
 ## Run locally
 
@@ -32,8 +39,15 @@ python3 -m http.server 8080
 
 Content ships by pushing to `main`: GitHub Pages serves the repo root at
 <https://nklassen-app.github.io/kairos-whiteboard/> and the phone app picks the
-change up on next open. Bump `CACHE` in `sw.js` (`whiteboard-vN`) with every
-content change or the app keeps serving the stale page.
+change up on next open. Bump `CACHE` in `sw.js` (`whiteboard-vN`) **and** the `.ver` marker in
+`index.html` with every content change or the app keeps serving the stale
+page.
+
+## Test
+
+```sh
+cd tests && npm install && npm test  # DOM-level: index.html booted in jsdom under node's test runner
+```
 
 The Android shell lives in `native/`; see `native/README.md`. It only needs
 rebuilding for shell changes (icon, app name, config).

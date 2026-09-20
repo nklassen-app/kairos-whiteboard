@@ -84,6 +84,10 @@
   .backlog .row + .row{border-top:1px solid #e6e9e4;}
   .backlog .task{font-size:15px;}
   .note{font-size:13px;color:var(--graphite);margin:10px 2px 0;}
+  .age{flex:none;font-size:12px;color:var(--graphite);font-variant-numeric:tabular-nums;padding-top:4px;white-space:nowrap;}
+  .copy{flex:none;font:inherit;font-size:12px;color:var(--graphite);background:#fff;border:1.5px solid var(--edge);border-radius:6px;padding:3px 8px;cursor:pointer;}
+  .copy.did{color:var(--green);border-color:var(--green);}
+  .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
 </style>
@@ -110,6 +114,8 @@
     <p class="note" id="status"></p>
   </section>
 </div>
+<!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
+<span class="ver">whiteboard-v2</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -118,6 +124,12 @@ let state = { active: [], backlog: [] };
 const $ = id => document.getElementById(id);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const openCount = () => state.active.length;
+// How long a task has been on Now: `since` (epoch ms) is set when it is
+// pushed up. Tasks that were on Now before there was a `since` get stamped
+// at their first load after the update — the earliest moment known.
+const DAY = 86400000;
+const daysOn = t => t.since ? Math.floor((Date.now() - t.since) / DAY) : null;
+const age = t => { const d = daysOn(t); return d == null ? '' : d <= 0 ? 'today' : d === 1 ? '1 day' : d + ' days'; };
 
 async function load(){
   try {
@@ -126,7 +138,12 @@ async function load(){
   } catch (e) {
     $('status').textContent = 'Starting a fresh board.';
   }
+  if (!Array.isArray(state.active)) state.active = [];
+  if (!Array.isArray(state.backlog)) state.backlog = [];
+  let stamped = false;
+  for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
   render();
+  if (stamped) save();
 }
 
 async function save(){
@@ -156,6 +173,8 @@ function render(){
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
         <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+        <span class="age" data-age="${t.id}">${age(t)}</span>
+        <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
   }
 
@@ -164,6 +183,7 @@ function render(){
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
         <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+        <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
     : '<p class="note">Empty.</p>';
@@ -181,6 +201,27 @@ function add(){
 
 function findTask(id){
   return state.active.find(t => t.id === id) || state.backlog.find(t => t.id === id);
+}
+
+// Copy a task to paste elsewhere (into Claude, to plan or resolve it): the
+// text, and for a task on Now a second line saying how long it has sat
+// there. Clipboard API first, a textarea fallback for WebViews without it.
+function taskText(t){
+  return state.active.includes(t) ? `${t.text}\nOn the Whiteboard's Now list for ${age(t)}.` : t.text;
+}
+function copyTask(id, btn){
+  const t = findTask(id);
+  if (!t) return;
+  const text = taskText(t);
+  const did = () => {
+    btn.textContent = 'copied'; btn.classList.add('did');
+    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('did'); }, 1200);
+  };
+  const fail = () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(did, fail); return; }
+  const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand && document.execCommand('copy'); } catch (e) {}
+  ta.remove(); (ok ? did : fail)();
 }
 
 // Tap a task's text to edit it in place. Enter or tapping away saves; Escape
@@ -231,12 +272,15 @@ document.addEventListener('click', e => {
   if (push && openCount() < 7){
     const i = state.backlog.findIndex(t => t.id === push.dataset.push);
     const [t] = state.backlog.splice(i, 1);
+    t.since = Date.now();
     state.active.push(t);
     render(); save();
     return;
   }
   const done = e.target.closest('[data-done]');
   if (done && !done.disabled){ complete(done.dataset.done); return; }
+  const copy = e.target.closest('[data-copy]');
+  if (copy){ copyTask(copy.dataset.copy, copy); return; }
   const edit = e.target.closest('[data-edit]');
   if (edit) startEdit(edit);
 });
