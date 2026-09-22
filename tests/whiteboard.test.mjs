@@ -71,6 +71,17 @@ test('the age counts whole days since the push', () => {
   assert.deepEqual(h.$$('#active .age').map(e => e.textContent), ['1 day', '5 days', 'today']);
 });
 
+test('the day turns over at midnight, not 24 rolling hours after the push', () => {
+  // NOW is 2026-09-20T10:00:00Z. A task pushed up late the previous
+  // calendar day (2026-09-19T23:00:00Z) is only 11 hours old, but it was
+  // pushed up on a different date, so it already reads "1 day" — this is
+  // the case that a plain (Date.now() - since) / DAY got wrong.
+  const h = boot({ seed: { active: [
+    { id: 'a', text: 'A', since: NOW - 11 * 3600 * 1000 },
+  ], backlog: [] } });
+  assert.equal(h.$('#active .age').textContent, '1 day');
+});
+
 test('tasks on Now from before there was a stamp are stamped at load and saved', () => {
   const h = boot({ seed: { active: [{ id: 'old', text: 'Old one' }], backlog: [{ id: 'b', text: 'Waiting' }] } });
   assert.equal(h.stored().active[0].since, NOW);

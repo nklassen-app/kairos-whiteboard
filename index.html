@@ -115,7 +115,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v2</span>
+<span class="ver">whiteboard-v3</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -127,8 +127,19 @@ const openCount = () => state.active.length;
 // How long a task has been on Now: `since` (epoch ms) is set when it is
 // pushed up. Tasks that were on Now before there was a `since` get stamped
 // at their first load after the update — the earliest moment known.
+// Counted in calendar days, not elapsed hours: a task pushed up at 8pm is
+// on Now for a second calendar day the moment the clock crosses midnight,
+// not 24 hours later. (Math.round rather than a plain subtract/DAY so a
+// DST shift, which makes a local day worth 23 or 25 real hours, doesn't
+// push the count off by one.)
 const DAY = 86400000;
-const daysOn = t => t.since ? Math.floor((Date.now() - t.since) / DAY) : null;
+const daysOn = t => {
+  if (!t.since) return null;
+  const since = new Date(t.since), now = new Date();
+  const sinceMidnight = new Date(since.getFullYear(), since.getMonth(), since.getDate()).getTime();
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.round((nowMidnight - sinceMidnight) / DAY);
+};
 const age = t => { const d = daysOn(t); return d == null ? '' : d <= 0 ? 'today' : d === 1 ? '1 day' : d + ' days'; };
 
 async function load(){

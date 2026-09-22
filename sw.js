@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v2';   // days on Now + copy   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v3';   // day count is calendar-day, not 24h-rolling   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

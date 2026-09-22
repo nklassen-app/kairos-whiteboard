@@ -20,9 +20,10 @@ The Floor (`kairos-floor`).
 6. State is one JSON document in `localStorage` under `whiteboard:v1`, on one
    device. No backup, no sync.
 7. A task on Now shows, at the right of its row, how long it has been there
-   (today · 1 day · N days), counted from the moment it was pushed up. Tasks
-   that were on Now before this existed count from their first load after
-   the update.
+   (today · 1 day · N days), counted in calendar days from the day it was
+   pushed up — it turns over at midnight, not 24 hours after the exact
+   moment. Tasks that were on Now before this existed count from their
+   first load after the update.
 8. Every row has a **copy** button: it puts the task's text on the clipboard
    to paste elsewhere — into Claude, to plan or resolve it. A task on Now
    copies with a second line saying how long it has been there.
