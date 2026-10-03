@@ -158,8 +158,20 @@ function addPrograms(h, text) {
   h.click('#prog-add');
 }
 
-test('no program list, no picker; programs are added one at a time or pasted as a list', () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }] } });
+test('a board that never had a program list starts with the default list, saved; a started list is left alone', () => {
+  const fresh = boot();
+  const names = fresh.stored().programs.map(p => p.name);
+  assert.equal(names.length, 11);
+  assert.equal(fresh.$('#programs-head').textContent, 'Programs · 11');
+  const older = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'B' }] } });
+  assert.deepEqual(older.stored().programs.map(p => p.name), names, 'an older board without the key gets it too');
+  assert.equal(older.$('[data-prog="b"]').options.length, 12, 'no program + the eleven');
+  const started = boot({ seed: { active: [], backlog: [], programs: [{ id: 'p1', name: 'Garden Revival' }] } });
+  assert.deepEqual(started.stored().programs.map(p => p.name), ['Garden Revival']);
+});
+
+test('an empty program list means no picker; programs are added one at a time or pasted as a list', () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
   assert.equal(h.$('[data-prog]'), null, 'no picker before there are programs');
   assert.equal(h.$('#programs-head').textContent, 'Programs · 0');
   addPrograms(h, 'Garden Revival');

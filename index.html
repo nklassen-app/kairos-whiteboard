@@ -149,8 +149,26 @@
 const KEY = 'whiteboard:v1';
 // archive: ticked tasks, newest first, each with `done` (epoch ms).
 // programs: the short list typed on the phone ({id, name}); a task names one
-// by `program` (its id). Program names live only here, never in the repo.
-let state = { active: [], backlog: [], archive: [], programs: [] };
+// by `program` (its id). It starts from DEFAULT_PROGRAMS, below.
+// (no `programs` key until load() decides: absent means "never had a list")
+let state = { active: [], backlog: [], archive: [] };
+// The starting program list: generic topics every household deals with — not
+// sensitive (N., 2026-10-03), so it ships in this repo. A board that has never
+// had a program list gets it on first load; a list already started on the
+// device is never touched. Edit it on the phone (add, rename) from there.
+const DEFAULT_PROGRAMS = [
+  "Working with healthcare providers",
+  "Supporting family endeavours",
+  "Wider family touchpoints",
+  "Shared adventures and cultural immersion",
+  "Creative Home",
+  "Preserve and strengthen family foundations",
+  "Engaging my advisory board",
+  "Curating primary house as a lab",
+  "Curating a nature retreat outside",
+  "Managing home support team",
+  "Project 29: School prep"
+];
 
 const $ = id => document.getElementById(id);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -183,11 +201,15 @@ async function load(){
   if (!Array.isArray(state.active)) state.active = [];
   if (!Array.isArray(state.backlog)) state.backlog = [];
   if (!Array.isArray(state.archive)) state.archive = [];
-  if (!Array.isArray(state.programs)) state.programs = [];
+  let seeded = false;
+  if (!Array.isArray(state.programs)){
+    state.programs = DEFAULT_PROGRAMS.map((name, i) => ({ id: 'd' + i, name }));
+    seeded = true;
+  }
   let stamped = false;
   for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
   render();
-  if (stamped) save();
+  if (stamped || seeded) save();
 }
 
 async function save(){
