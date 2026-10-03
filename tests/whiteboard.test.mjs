@@ -102,7 +102,7 @@ test('copy puts the text on the clipboard; a Now task adds how long it has sat t
   assert.equal(h.$('#active [data-copy="a"]').textContent, 'copy');
 });
 
-test('the rest is as it was: edit in place, the cap of seven, the tick deletes', async () => {
+test('the rest is as it was: edit in place, the cap of seven; the tick frees a slot', async () => {
   const h = boot({ seed: { active: [1, 2, 3, 4, 5, 6, 7].map(i => ({ id: 'a' + i, text: 'T' + i, since: NOW })), backlog: [{ id: 'b', text: 'Eighth' }] } });
   assert.equal(h.$('[data-push]').disabled, true);
   h.click('[data-done="a1"]');
@@ -113,4 +113,91 @@ test('the rest is as it was: edit in place, the cap of seven, the tick deletes',
   const input = h.$('input.edit'); input.value = 'Eighth, edited';
   input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   assert.equal(h.stored().backlog[0].text, 'Eighth, edited');
+});
+
+// --- W1: the archive -------------------------------------------------------
+// Made-up programs only: real program names never enter this public repo.
+
+test('the tick moves a task to the archive, stamped with when, newest first', async () => {
+  const h = boot({ seed: { active: [
+    { id: 'a', text: 'Fix the gate latch', since: NOW - DAY },
+    { id: 'b', text: 'Return the library books', since: NOW },
+  ], backlog: [], archive: [{ id: 'old', text: 'Paint the shed', done: NOW - 3 * DAY }] } });
+  h.click('[data-done="a"]');
+  await new Promise(r => setTimeout(r, 600));
+  const s = h.stored();
+  assert.deepEqual(s.active.map(t => t.id), ['b']);
+  assert.deepEqual(s.archive.map(t => t.id), ['a', 'old']);
+  assert.equal(s.archive[0].done, NOW);
+  assert.equal(s.archive[0].since, undefined, 'the Now stamp does not travel to the archive');
+  assert.equal(h.$('#archive-head').textContent, 'Archive · 2');
+  assert.deepEqual(h.$$('#archive .row').map(r => r.textContent.trim().split(/\s{2,}|\n/)[0]), ['Fix the gate latch20 Sept', 'Paint the shed17 Sept']);
+});
+
+test('an older board without an archive opens and starts one; the archive survives a reload', async () => {
+  const seed = { active: [{ id: 'a', text: 'Oil the hinges', since: NOW }], backlog: [] };
+  const h = boot({ seed });
+  assert.equal(h.$('#archive-head').textContent, 'Archive · 0');
+  assert.match(h.$('#archive').textContent, /Nothing ticked off yet/);
+  h.click('[data-done="a"]');
+  await new Promise(r => setTimeout(r, 600));
+  const again = boot({ seed: h.stored() });
+  assert.equal(again.$('#archive-head').textContent, 'Archive · 1');
+  assert.match(again.$('#archive').textContent, /Oil the hinges/);
+});
+
+test('an archived task from another year shows the year', () => {
+  const h = boot({ seed: { active: [], backlog: [], archive: [{ id: 'x', text: 'Old one', done: new Date('2025-12-30T12:00:00Z').getTime() }] } });
+  assert.match(h.$('#archive .meta').textContent, /30 Dec 2025/);
+});
+
+// --- W2: programs -----------------------------------------------------------
+
+function addPrograms(h, text) {
+  h.$('#prog-field').value = text;
+  h.click('#prog-add');
+}
+
+test('no program list, no picker; programs are added one at a time or pasted as a list', () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }] } });
+  assert.equal(h.$('[data-prog]'), null, 'no picker before there are programs');
+  assert.equal(h.$('#programs-head').textContent, 'Programs · 0');
+  addPrograms(h, 'Garden Revival');
+  addPrograms(h, 'List:\n- Harbor Walks\n• Kitchen Lab\n\n1. garden revival\n  Book Club  ');
+  // The heading line ("List:") is skipped, the duplicate (any case) too; bullets are stripped.
+  assert.deepEqual(h.stored().programs.map(p => p.name), ['Garden Revival', 'Harbor Walks', 'Kitchen Lab', 'Book Club']);
+  assert.equal(h.$('#programs-head').textContent, 'Programs · 4');
+  assert.equal(h.$('#prog-field').value, '');
+  assert.ok(h.$('[data-prog="b"]'), 'the picker appears once there are programs');
+});
+
+test('a task picks a program, the row shows it, and it stays with the task into the archive', async () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Prune the roses' }], programs: [{ id: 'p1', name: 'Garden Revival' }, { id: 'p2', name: 'Kitchen Lab' }] } });
+  const sel = h.$('[data-prog="b"]');
+  assert.deepEqual([...sel.options].map(o => o.textContent), ['no program', 'Garden Revival', 'Kitchen Lab']);
+  sel.value = 'p1';
+  sel.dispatchEvent(new h.w.Event('change', { bubbles: true }));
+  assert.equal(h.stored().backlog[0].program, 'p1');
+  assert.equal(h.$('[data-prog="b"]').value, 'p1');
+  assert.ok(h.$('[data-prog="b"]').classList.contains('set'));
+  h.click('[data-push="b"]');
+  assert.equal(h.$('#active [data-prog="b"]').value, 'p1', 'the program travels to Now');
+  h.click('[data-done="b"]');
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(h.stored().archive[0].program, 'p1');
+  assert.match(h.$('#archive .meta').textContent, /20 Sept · Garden Revival/);
+  // Clearing back to "no program" removes it.
+  const h2 = boot({ seed: { active: [], backlog: [{ id: 'c', text: 'C', program: 'p1' }], programs: [{ id: 'p1', name: 'Garden Revival' }] } });
+  const s2 = h2.$('[data-prog="c"]'); s2.value = '';
+  s2.dispatchEvent(new h2.w.Event('change', { bubbles: true }));
+  assert.equal(h2.stored().backlog[0].program, undefined);
+});
+
+test('a program is renamed by tapping it, and every task shows the new name', () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'B', program: 'p1' }], programs: [{ id: 'p1', name: 'Garden Revivel' }] } });
+  h.click('[data-prog-edit="p1"]');
+  const input = h.$('input.edit'); input.value = 'Garden Revival';
+  input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.equal(h.stored().programs[0].name, 'Garden Revival');
+  assert.equal(h.$('[data-prog="b"]').selectedOptions[0].textContent, 'Garden Revival');
 });

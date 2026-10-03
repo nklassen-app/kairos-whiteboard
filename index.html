@@ -87,6 +87,20 @@
   .age{flex:none;font-size:12px;color:var(--graphite);font-variant-numeric:tabular-nums;padding-top:4px;white-space:nowrap;}
   .copy{flex:none;font:inherit;font-size:12px;color:var(--graphite);background:#fff;border:1.5px solid var(--edge);border-radius:6px;padding:3px 8px;cursor:pointer;}
   .copy.did{color:var(--green);border-color:var(--green);}
+  .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+  .prog{align-self:flex-start;max-width:100%;font:inherit;font-size:12px;color:var(--graphite);background:#fff;
+    border:1.5px solid var(--edge);border-radius:6px;padding:2px 4px;}
+  .prog.set{color:var(--blue);border-color:#b8c8e6;}
+  details{margin-bottom:22px;}
+  summary{font-size:13px;font-weight:650;color:var(--graphite);cursor:pointer;padding:4px 0;}
+  .archive .row,.programs .row{padding:9px 2px;}
+  .archive .row + .row,.programs .row + .row{border-top:1px solid #e6e9e4;}
+  .archive .task{font-size:14px;color:var(--graphite);cursor:default;}
+  .archive .meta{display:block;font-size:12px;color:var(--graphite);opacity:.8;}
+  .programs .task{font-size:14px;}
+  .programs textarea{flex:1;font:inherit;font-size:15px;padding:9px 12px;background:#fff;resize:vertical;
+    border:1.5px solid var(--edge);border-radius:8px;color:var(--ink);min-height:44px;}
+  .programs textarea:focus{outline:none;border-color:var(--ink);}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
@@ -113,13 +127,30 @@
     <div id="backlog"></div>
     <p class="note" id="status"></p>
   </section>
+
+  <details class="archive" id="archive-box">
+    <summary id="archive-head">Archive</summary>
+    <div id="archive"></div>
+  </details>
+
+  <details class="programs" id="programs-box">
+    <summary id="programs-head">Programs</summary>
+    <div class="capture">
+      <textarea id="prog-field" rows="1" placeholder="Add programs, one per line" autocomplete="off"></textarea>
+      <button class="add" id="prog-add" type="button">Add</button>
+    </div>
+    <div id="programs"></div>
+  </details>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v3</span>
+<span class="ver">whiteboard-v4</span>
 
 <script>
 const KEY = 'whiteboard:v1';
-let state = { active: [], backlog: [] };
+// archive: ticked tasks, newest first, each with `done` (epoch ms).
+// programs: the short list typed on the phone ({id, name}); a task names one
+// by `program` (its id). Program names live only here, never in the repo.
+let state = { active: [], backlog: [], archive: [], programs: [] };
 
 const $ = id => document.getElementById(id);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -151,6 +182,8 @@ async function load(){
   }
   if (!Array.isArray(state.active)) state.active = [];
   if (!Array.isArray(state.backlog)) state.backlog = [];
+  if (!Array.isArray(state.archive)) state.archive = [];
+  if (!Array.isArray(state.programs)) state.programs = [];
   let stamped = false;
   for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
   render();
@@ -164,6 +197,21 @@ async function save(){
   } catch (e) {
     $('status').textContent = 'Not saved — this browser is blocking storage.';
   }
+}
+
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const programName = id => (state.programs.find(p => p.id === id) || {}).name || '';
+// The day a task was ticked: "3 Oct", with the year once it is not this year's.
+const doneDay = ms => {
+  const d = new Date(ms), opts = { day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-GB', opts);
+};
+// The program picker under a task's text — only once there is a program list.
+function picker(t){
+  if (!state.programs.length) return '';
+  const opts = state.programs.map(p => `<option value="${p.id}" ${t.program === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  return `<select class="prog${t.program ? ' set' : ''}" data-prog="${t.id}" aria-label="Program for ${esc(t.text)}"><option value="">no program</option>${opts}</select>`;
 }
 
 function render(){
@@ -183,7 +231,7 @@ function render(){
         <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
-        <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${picker(t)}</div>
         <span class="age" data-age="${t.id}">${age(t)}</span>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
@@ -193,20 +241,50 @@ function render(){
   b.innerHTML = state.backlog.length
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
-        <span class="task" data-edit="${t.id}">${esc(t.text)}</span>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${picker(t)}</div>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
     : '<p class="note">Empty.</p>';
+
+  $('archive-head').textContent = `Archive · ${state.archive.length}`;
+  $('archive').innerHTML = state.archive.length
+    ? state.archive.map(t => `
+      <div class="row" data-row="${t.id}">
+        <span class="task">${esc(t.text)}<span class="meta">${doneDay(t.done)}${t.program && programName(t.program) ? ' · ' + esc(programName(t.program)) : ''}</span></span>
+      </div>`).join('')
+    : '<p class="note">Nothing ticked off yet.</p>';
+
+  $('programs-head').textContent = `Programs · ${state.programs.length}`;
+  $('programs').innerHTML = state.programs.length
+    ? state.programs.map(p => `
+      <div class="row"><span class="task" data-prog-edit="${p.id}">${esc(p.name)}</span></div>`).join('')
+    : '<p class="note">None yet. Add the programs you do Whiteboard tasks for.</p>';
 }
 
 function add(){
   const field = $('field');
   const text = field.value.trim();
   if (!text) return;
-  state.backlog.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text });
+  state.backlog.push({ id: newId(), text });
   field.value = '';
   field.focus();
+  render(); save();
+}
+
+// Add one program, or paste several — one per line; list bullets are
+// stripped, a heading line ending in ":" is skipped, and a name already on
+// the list (any case) is not added twice.
+function addPrograms(){
+  const field = $('prog-field');
+  const have = new Set(state.programs.map(p => p.name.toLowerCase()));
+  for (const line of field.value.split(/\r?\n/)){
+    const name = line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim();
+    if (!name || name.endsWith(':') || have.has(name.toLowerCase())) continue;
+    have.add(name.toLowerCase());
+    state.programs.push({ id: newId(), name });
+  }
+  field.value = '';
   render(); save();
 }
 
@@ -238,7 +316,11 @@ function copyTask(id, btn){
 // Tap a task's text to edit it in place. Enter or tapping away saves; Escape
 // or an empty field leaves the original text untouched. Editing never deletes.
 function startEdit(span){
-  const t = findTask(span.dataset.edit);
+  // A program's name is edited the same way as a task's text (rename only —
+  // there is no removing a program, as there is no deleting a task).
+  const t = span.dataset.progEdit
+    ? { get text(){ return this.p.name; }, set text(v){ this.p.name = v; }, p: state.programs.find(p => p.id === span.dataset.progEdit) }
+    : findTask(span.dataset.edit);
   const input = document.createElement('input');
   input.className = 'edit';
   input.value = t.text;
@@ -262,13 +344,19 @@ function startEdit(span){
 }
 
 // Ticking a task is completion: the tick draws, the row fades, and the task
-// is gone for good. There is no undo and no archive.
+// leaves the board for the archive, stamped with when — kept, never shown on
+// the board again. There is no undo.
 function complete(id){
   const row = document.querySelector(`[data-row="${id}"]`);
   row.classList.add('done');
   row.querySelector('[data-done]').disabled = true;
   setTimeout(() => {
-    state.active = state.active.filter(t => t.id !== id);
+    const i = state.active.findIndex(t => t.id === id);
+    if (i < 0) return;
+    const [t] = state.active.splice(i, 1);
+    delete t.since;
+    t.done = Date.now();
+    state.archive.unshift(t);
     render(); save();
   }, 480);
 }
@@ -276,6 +364,20 @@ function complete(id){
 $('add').addEventListener('click', add);
 $('field').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); add(); }
+});
+
+$('prog-add').addEventListener('click', addPrograms);
+$('prog-field').addEventListener('keydown', e => {
+  // Enter adds; Shift+Enter (or a paste) makes a new line for several at once.
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); addPrograms(); }
+});
+document.addEventListener('change', e => {
+  const sel = e.target.closest('[data-prog]');
+  if (!sel) return;
+  const t = findTask(sel.dataset.prog);
+  if (!t) return;
+  if (sel.value) t.program = sel.value; else delete t.program;
+  render(); save();
 });
 
 document.addEventListener('click', e => {
@@ -292,7 +394,7 @@ document.addEventListener('click', e => {
   if (done && !done.disabled){ complete(done.dataset.done); return; }
   const copy = e.target.closest('[data-copy]');
   if (copy){ copyTask(copy.dataset.copy, copy); return; }
-  const edit = e.target.closest('[data-edit]');
+  const edit = e.target.closest('[data-edit],[data-prog-edit]');
   if (edit) startEdit(edit);
 });
 
