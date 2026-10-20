@@ -101,6 +101,10 @@
   .programs textarea{flex:1;font:inherit;font-size:15px;padding:9px 12px;background:#fff;resize:vertical;
     border:1.5px solid var(--edge);border-radius:8px;color:var(--ink);min-height:44px;}
   .programs textarea:focus{outline:none;border-color:var(--ink);}
+  /* Export for agent (Agent design 5): the document shown before it is copied */
+  .export{margin-top:22px;}
+  .export .xdoc{font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;background:#fff;border:1.5px solid var(--edge);border-radius:8px;padding:10px 12px;margin:8px 0 0;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;}
+  .export .btns{display:flex;gap:8px;margin-top:8px;}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
@@ -141,9 +145,19 @@
     </div>
     <div id="programs"></div>
   </details>
+
+  <section class="export">
+    <button class="add" id="export" type="button">Export for agent</button>
+    <div id="export-box" hidden>
+      <h2 style="margin-top:14px">This is what leaves the phone</h2>
+      <p class="note" id="export-note"></p>
+      <pre class="xdoc" id="export-doc"></pre>
+      <div class="btns"><button class="add" id="export-copy" type="button">Copy</button><button class="copy" id="export-close" type="button">Close</button></div>
+    </div>
+  </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v6</span>
+<span class="ver">whiteboard-v7</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -282,6 +296,56 @@ function render(){
     ? state.programs.map(p => `
       <div class="row"><span class="task" data-prog-edit="${p.id}">${esc(p.name)}</span></div>`).join('')
     : '<p class="note">None yet. Add the programs you do Whiteboard tasks for.</p>';
+  renderExport();
+}
+
+/* ---- Export for agent (Agent design 5): the app's one door ---- */
+
+// Everything that leaves the Whiteboard for an agent is built here, from an
+// allow-list. In: the text and program name of each task on Now (with its
+// days there) and on the backlog, and two counts — tasks ticked off this
+// week, and tasks held back. Only tasks under a program in SHARED cross;
+// everything else is held back and only counted: the health, family and
+// school defaults (d0, d1, d2, d5, d10 — Crown jewels, N., 2026-10-19), any
+// program added later (until N. allows it), and tasks with no program
+// (N., 2026-10-20). By id, so a renamed program keeps its class. Out,
+// always: the archive's text, ids and timestamps. Nothing goes over the
+// network — the panel shows the document and N. copies it by hand.
+const SHARED = new Set(['d3', 'd4', 'd6', 'd7', 'd8', 'd9']);
+let exportOpen = false;
+function agentExport(){
+  const now = new Date();
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7).getTime();
+  const shared = t => SHARED.has(t.program);
+  const all = state.active.concat(state.backlog);
+  return {
+    app: 'whiteboard',
+    exported: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+    about: 'N.\'s own tasks. now: on the Now list (at most seven), with days there; next: the backlog. held_back: tasks under private programs, left out on purpose.',
+    now: state.active.filter(shared).map(t => ({ text: t.text, program: programName(t.program), days_on_now: daysOn(t) })),
+    next: state.backlog.filter(shared).map(t => ({ text: t.text, program: programName(t.program) })),
+    done_this_week: state.archive.filter(t => t.done >= monday).length,
+    held_back: all.filter(t => !shared(t)).length,
+  };
+}
+const agentText = () => JSON.stringify(agentExport(), null, 2) + '\n';
+function renderExport(){
+  $('export-box').hidden = !exportOpen;
+  $('export').hidden = exportOpen;
+  if (!exportOpen) return;
+  const x = agentExport();
+  $('export-note').textContent = `Tasks on Now and the backlog under your shared programs. ${x.held_back} held back (private programs, or no program); the archive's text stays here.`;
+  $('export-doc').textContent = agentText();
+}
+function copyExport(){
+  const text = agentText();
+  const btn = $('export-copy');
+  const did = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+  const fail = () => { $('export-note').textContent = 'Could not copy — select the text and copy it by hand.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(did, fail); return; }
+  const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand && document.execCommand('copy'); } catch (e) {}
+  ta.remove(); (ok ? did : fail)();
 }
 
 function add(){
@@ -416,6 +480,9 @@ document.addEventListener('click', e => {
   if (done && !done.disabled){ complete(done.dataset.done); return; }
   const copy = e.target.closest('[data-copy]');
   if (copy){ copyTask(copy.dataset.copy, copy); return; }
+  if (e.target.id === 'export'){ exportOpen = true; render(); return; }
+  if (e.target.id === 'export-close'){ exportOpen = false; render(); return; }
+  if (e.target.id === 'export-copy'){ copyExport(); return; }
   const edit = e.target.closest('[data-edit],[data-prog-edit]');
   if (edit) startEdit(edit);
 });
