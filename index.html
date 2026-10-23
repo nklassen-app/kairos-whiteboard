@@ -157,7 +157,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v7</span>
+<span class="ver">whiteboard-v8</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -358,15 +358,39 @@ function add(){
   render(); save();
 }
 
-// Add one program, or paste several — one per line; list bullets are
-// stripped, a heading line ending in ":" is skipped, and a name already on
-// the list (any case) is not added twice.
+// A pasted list, one item per line: list bullets are stripped, and a
+// heading line ending in ":" and an empty line are skipped.
+const listLines = text => text.split(/\r?\n/)
+  .map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim())
+  .filter(line => line && !line.endsWith(':'));
+
+// Paste several tasks into the task field — one per line (a list Claude
+// hands over: N.'s ready steps, `dashboard.py --tasks`). Each lands on the
+// backlog; a task already on Now or the backlog (any case) is not added
+// twice. A one-line paste is an ordinary paste.
+function pasteTasks(e){
+  const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+  if (!/\n/.test(text.trim())) return;
+  e.preventDefault();
+  const have = new Set([...state.active, ...state.backlog].map(t => t.text.toLowerCase()));
+  let n = 0;
+  for (const line of listLines(text)){
+    if (have.has(line.toLowerCase())) continue;
+    have.add(line.toLowerCase());
+    state.backlog.push({ id: newId(), text: line });
+    n++;
+  }
+  render(); save();
+  $('status').textContent = `${n} task${n === 1 ? '' : 's'} added from the list.`;
+}
+
+// Add one program, or paste several (listLines); a name already on the
+// list (any case) is not added twice.
 function addPrograms(){
   const field = $('prog-field');
   const have = new Set(state.programs.map(p => p.name.toLowerCase()));
-  for (const line of field.value.split(/\r?\n/)){
-    const name = line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim();
-    if (!name || name.endsWith(':') || have.has(name.toLowerCase())) continue;
+  for (const name of listLines(field.value)){
+    if (have.has(name.toLowerCase())) continue;
     have.add(name.toLowerCase());
     state.programs.push({ id: newId(), name });
   }
@@ -451,6 +475,7 @@ $('add').addEventListener('click', add);
 $('field').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); add(); }
 });
+$('field').addEventListener('paste', pasteTasks);
 
 $('prog-add').addEventListener('click', addPrograms);
 $('prog-field').addEventListener('keydown', e => {

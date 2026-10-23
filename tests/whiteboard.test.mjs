@@ -183,6 +183,26 @@ test('an empty program list means no picker; programs are added one at a time or
   assert.ok(h.$('[data-prog="b"]'), 'the picker appears once there are programs');
 });
 
+function pasteTasks(h, text) {
+  const e = new h.w.Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'clipboardData', { value: { getData: () => text } });
+  h.$('#field').dispatchEvent(e);
+  return e;
+}
+
+test('a list pasted into the task field adds one backlog task per line; a one-line paste is an ordinary paste', () => {
+  const h = boot({ seed: { active: [{ id: 'a', text: 'Prune the roses', since: NOW }], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
+  const e = pasteTasks(h, 'Tasks:\n- Read the garden plan and pick a bed — 10 min\n\n2. sort the toolbox\nPrune the roses\n  Oil the hinges  ');
+  assert.ok(e.defaultPrevented, 'the list never lands in the field as one line');
+  // The heading and the empty line are skipped, bullets stripped; a task already on Now or the backlog (any case) is not added twice.
+  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Sort the toolbox', 'Read the garden plan and pick a bed — 10 min', 'Oil the hinges']);
+  assert.equal(h.stored().active.length, 1);
+  assert.equal(h.$('#status').textContent, '2 tasks added from the list.');
+  const one = pasteTasks(h, 'Water the ferns');
+  assert.equal(one.defaultPrevented, false);
+  assert.equal(h.stored().backlog.length, 3);
+});
+
 test('a task picks a program, the row shows it, and it stays with the task into the archive', async () => {
   const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Prune the roses' }], programs: [{ id: 'p1', name: 'Garden Revival' }, { id: 'p2', name: 'Kitchen Lab' }] } });
   const sel = h.$('[data-prog="b"]');

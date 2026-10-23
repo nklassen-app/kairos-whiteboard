@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v7';   // Agent design 5: Export for agent   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v8';   // Pace 5: paste several tasks   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

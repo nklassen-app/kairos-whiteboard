@@ -51,6 +51,12 @@ The Floor (`kairos-floor`).
    any program added later, and tasks with no program (N., 2026-10-20).
    The archive's text, ids and timestamps never go. No network call; N.
    pastes it by hand. The tests pin the allow-list.
+11. **A pasted list** (Pace 5, 2026-10-23): pasting several lines into "Add
+   a task" adds one Backlog task per line, cleaned like the program list
+   (bullets stripped, a heading line ending in `:` skipped); a task already
+   on Now or the Backlog (any case) is not added twice. This is how N.'s
+   ready Kairos steps arrive (`dashboard.py --tasks`). A one-line paste is
+   an ordinary paste.
 
 ## Run locally
 
