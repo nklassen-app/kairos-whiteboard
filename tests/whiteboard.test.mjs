@@ -213,3 +213,95 @@ test('a program is renamed by tapping it, and every task shows the new name', ()
   assert.equal(h.stored().programs[0].name, 'Garden Revival');
   assert.equal(h.$('[data-prog="b"]').selectedOptions[0].textContent, 'Garden Revival');
 });
+
+/* ---- Export for agent (Agent design 5) ---- */
+
+// NOW is Sunday 2026-09-20; the week started Monday 2026-09-14.
+const PROGRAMS = ['Health', 'Family', 'Wider family', 'Adventures', 'Creative Home', 'Foundations',
+  'Advisory board', 'House as lab', 'Nature retreat', 'Home support team', 'School prep'].map((name, i) => ({ id: 'd' + i, name }));
+const EXPORT_BOARD = () => ({
+  programs: PROGRAMS.concat({ id: 'zz', name: 'Added later' }),
+  active: [
+    { id: 'a1', text: 'Fix the gate latch', program: 'd4', since: NOW - 3 * DAY },
+    { id: 'a2', text: 'PRIVATE health task', program: 'd0', since: NOW },
+    { id: 'a3', text: 'PRIVATE no-program task', since: NOW },
+  ],
+  backlog: [
+    { id: 'b1', text: 'Brief the cleaner', program: 'd9' },
+    { id: 'b2', text: 'PRIVATE school task', program: 'd10' },
+    { id: 'b3', text: 'PRIVATE family task', program: 'd5' },
+    { id: 'b4', text: 'PRIVATE added-program task', program: 'zz' },
+    { id: 'b5', text: 'PRIVATE wider-family task', program: 'd2' },
+    { id: 'b6', text: 'PRIVATE family endeavour', program: 'd1' },
+  ],
+  archive: [
+    { id: 'x1', text: 'ARCHIVED this week', program: 'd4', done: NOW - 2 * DAY },
+    { id: 'x2', text: 'ARCHIVED private this week', program: 'd0', done: NOW - 6 * DAY + 3600 * 1000 },
+    { id: 'x3', text: 'ARCHIVED last week', program: 'd4', done: NOW - 8 * DAY },
+  ],
+});
+function exportDoc(h) {
+  h.click('#export');
+  return JSON.parse(h.$('#export-doc').textContent);
+}
+
+test('Export for agent shows, before anything is copied, the shared tasks on Now and the backlog, the week\'s count and the held-back count', () => {
+  const h = boot({ seed: EXPORT_BOARD() });
+  assert.ok(h.$('#export-box').hidden, 'nothing shown until tapped');
+  const x = exportDoc(h);
+  assert.ok(!h.$('#export-box').hidden);
+  assert.match(h.$('.export').textContent, /This is what leaves the phone/);
+  assert.deepEqual(x, {
+    app: 'whiteboard', exported: '2026-09-20', about: x.about,
+    now: [{ text: 'Fix the gate latch', program: 'Creative Home', days_on_now: 3 }],
+    next: [{ text: 'Brief the cleaner', program: 'Home support team' }],
+    done_this_week: 2,
+    held_back: 7,
+  });
+  assert.match(h.$('#export-note').textContent, /7 held back/);
+  assert.equal(h.copied(), null, 'nothing copied by opening it');
+});
+
+test('held-back tasks never appear: the private defaults, an added program, no program; nor the archive\'s text, ids or timestamps', () => {
+  const h = boot({ seed: EXPORT_BOARD() });
+  h.click('#export');
+  const text = h.$('#export-doc').textContent;
+  for (const s of ['PRIVATE', 'ARCHIVED', 'Health', 'Family', 'School', 'Added later', '"id"', 'since', '"done"', String(NOW).slice(0, 6)])
+    assert.ok(!text.includes(s), `"${s}" is not in the export`);
+  for (const id of ['a1', 'a2', 'b1', 'x1', 'd4', 'd9', 'zz'])
+    assert.doesNotMatch(text, new RegExp(`"${id}"`), `id ${id} is not in the export`);
+});
+
+test('a held-back program stays held back after a rename; a shared one is exported under its new name', () => {
+  const board = EXPORT_BOARD();
+  board.programs.find(p => p.id === 'd10').name = 'Creative projects';
+  board.programs.find(p => p.id === 'd4').name = 'Home studio';
+  const h = boot({ seed: board });
+  const x = exportDoc(h);
+  assert.ok(!JSON.stringify(x).includes('PRIVATE'));
+  assert.equal(x.now[0].program, 'Home studio');
+  assert.equal(x.held_back, 7);
+});
+
+test('Copy puts exactly the shown document on the clipboard; Close hides it; nothing is stored', async () => {
+  const seed = EXPORT_BOARD();
+  const h = boot({ seed });
+  h.click('#export');
+  const shown = h.$('#export-doc').textContent;
+  h.click('#export-copy');
+  await h.tick();
+  assert.equal(h.copied(), shown);
+  assert.equal(h.$('#export-copy').textContent, 'Copied');
+  h.click('#export-close');
+  assert.ok(h.$('#export-box').hidden);
+  assert.deepEqual(h.stored(), seed, 'the export changes nothing stored');
+});
+
+test('the open export follows the board: a task pushed to Now moves from next to now', () => {
+  const h = boot({ seed: EXPORT_BOARD() });
+  h.click('#export');
+  h.click('[data-push="b1"]');
+  const x = JSON.parse(h.$('#export-doc').textContent);
+  assert.deepEqual(x.next, []);
+  assert.deepEqual(x.now.map(t => t.text), ['Fix the gate latch', 'Brief the cleaner']);
+});

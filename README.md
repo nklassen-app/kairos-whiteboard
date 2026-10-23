@@ -41,6 +41,16 @@ The Floor (`kairos-floor`).
    stripped, a heading line ending in `:` and repeats are skipped). Tap a
    name to rename it; there is no removing one. Every task on Now and the
    Backlog has a picker under its text while the list has a program.
+10. **Export for agent** (Agent design 5), at the bottom, shows *This is
+   what leaves the phone* — one JSON document — and **Copy**. It is the
+   app's one door: `agentExport()` sends the text and program name of the
+   tasks on Now (with days there) and on the Backlog, the count ticked off
+   this week, and how many were held back. Only tasks under a program in
+   `SHARED` cross, by id so a rename keeps the class; everything else is
+   held back and only counted — the health, family and school defaults,
+   any program added later, and tasks with no program (N., 2026-10-20).
+   The archive's text, ids and timestamps never go. No network call; N.
+   pastes it by hand. The tests pin the allow-list.
 
 ## Run locally
 
