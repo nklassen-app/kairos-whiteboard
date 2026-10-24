@@ -33,11 +33,11 @@ The Floor (`kairos-floor`).
    to paste elsewhere — into Claude, to plan or resolve it. A task on Now
    copies with a second line saying how long it has been there.
 9. **Programs** (collapsed at the bottom) is a short list on the phone — the
-   programs I do Whiteboard tasks for. A board that has never had a list
-   starts with the default one in `index.html` (`DEFAULT_PROGRAMS`: generic
-   topics every household deals with — not sensitive, N. 2026-10-03, so it
-   lives in this repo); a list already started on the device is never
-   overwritten. Add one, or paste several at once, one per line (bullets are
+   programs I do Whiteboard tasks for, a selection from the one program list
+   (`kairos-system/programs.md`, private), matched by name only: no code
+   reads that file and nothing here copies it (N., 2026-10-24; the seed list
+   that used to ship in `index.html` is gone). A new board starts empty; a
+   list already on the device is never overwritten. Add one, or paste several at once, one per line (bullets are
    stripped, a heading line ending in `:` and repeats are skipped). Tap a
    name to rename it; there is no removing one. Every task on Now and the
    Backlog has a picker under its text while the list has a program.

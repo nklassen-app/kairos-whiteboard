@@ -164,14 +164,12 @@ function addPrograms(h, text) {
   h.click('#prog-add');
 }
 
-test('a board that never had a program list starts with the default list, saved; a started list is left alone', () => {
+test('a board that never had a program list starts with an empty one, saved; a started list is left alone', () => {
   const fresh = boot();
-  const names = fresh.stored().programs.map(p => p.name);
-  assert.equal(names.length, 11);
-  assert.equal(fresh.$('#programs-head').textContent, 'Programs · 11');
+  assert.deepEqual(fresh.stored().programs, []);
+  assert.equal(fresh.$('#programs-head').textContent, 'Programs · 0');
   const older = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'B' }] } });
-  assert.deepEqual(older.stored().programs.map(p => p.name), names, 'an older board without the key gets it too');
-  assert.equal(older.$('[data-prog="b"]').options.length, 12, 'no program + the eleven');
+  assert.deepEqual(older.stored().programs, [], 'an older board without the key gets an empty list');
   const started = boot({ seed: { active: [], backlog: [], programs: [{ id: 'p1', name: 'Garden Revival' }] } });
   assert.deepEqual(started.stored().programs.map(p => p.name), ['Garden Revival']);
 });

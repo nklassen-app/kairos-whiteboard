@@ -178,32 +178,20 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v10</span>
+<span class="ver">whiteboard-v11</span>
 
 <script>
 const KEY = 'whiteboard:v1';
 // archive: ticked tasks, newest first, each with `done` (epoch ms).
 // programs: the short list typed on the phone ({id, name}); a task names one
-// by `program` (its id). It starts from DEFAULT_PROGRAMS, below.
+// by `program` (its id). A new board starts with an empty list.
 // (no `programs` key until load() decides: absent means "never had a list")
 let state = { active: [], backlog: [], archive: [] };
-// The starting program list: generic topics every household deals with — not
-// sensitive (N., 2026-10-03), so it ships in this repo. A board that has never
-// had a program list gets it on first load; a list already started on the
-// device is never touched. Edit it on the phone (add, rename) from there.
-const DEFAULT_PROGRAMS = [
-  "Working with healthcare providers",
-  "Supporting family endeavours",
-  "Wider family touchpoints",
-  "Shared adventures and cultural immersion",
-  "Creative Home",
-  "Preserve and strengthen family foundations",
-  "Engaging my advisory board",
-  "Curating primary house as a lab",
-  "Curating a nature retreat outside",
-  "Managing home support team",
-  "Project 29: School prep"
-];
+// The program list is mine, kept on the phone: the programs I do Whiteboard
+// tasks for, picked from the one program list (kairos-system/programs.md, in
+// the private repo) and matched to it by name only, never by code (N.,
+// 2026-10-24). No list ships in this repo; boards seeded before then keep
+// their d0-d10 ids, which the export's SHARED filter below still reads.
 
 const $ = id => document.getElementById(id);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -238,7 +226,7 @@ async function load(){
   if (!Array.isArray(state.archive)) state.archive = [];
   let seeded = false;
   if (!Array.isArray(state.programs)){
-    state.programs = DEFAULT_PROGRAMS.map((name, i) => ({ id: 'd' + i, name }));
+    state.programs = [];
     seeded = true;
   }
   let stamped = false;
@@ -486,7 +474,8 @@ function kairosConnect(){
 // days there) and on the backlog, and two counts — tasks ticked off this
 // week, and tasks held back. Only tasks under a program in SHARED cross;
 // everything else is held back and only counted: the health, family and
-// school defaults (d0, d1, d2, d5, d10 — Crown jewels, N., 2026-10-19), any
+// school programs from the old seed list (d0, d1, d2, d5, d10 — Crown jewels,
+// N., 2026-10-19), any
 // program added later (until N. allows it), and tasks with no program
 // (N., 2026-10-20). By id, so a renamed program keeps its class. Out,
 // always: the archive's text, ids and timestamps. Nothing goes over the

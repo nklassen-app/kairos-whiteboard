@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v10';  // Pace 6: Kairos tasks on the backlog, ticks written back to the issue   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v11';  // the seed program list removed: programs.md is the one list   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
