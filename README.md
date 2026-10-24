@@ -57,19 +57,28 @@ The Floor (`kairos-floor`).
    on Now or the Backlog (any case) is not added twice. This is how N.'s
    ready Kairos steps arrive (`dashboard.py --tasks`). A one-line paste is
    an ordinary paste.
-12. **Kairos** (Pace 6, 2026-10-24; Charter v1.6), under Now: N.'s ready
-   steps from the dashboard issue (`nklassen-app/kairos_v3#11`), read each
-   time the app opens or comes back to the front. **The app's one outbound
-   door:** `kairosDoor()` reads that one issue with a fine-grained token
-   (only `kairos_v3`, Issues, 90 days), typed into "Connect to Kairos" on
-   the phone and kept under its own key (`whiteboard:kairos-token`), never
-   in the board's document, the export or a copy. A Content-Security-Policy
-   in the page allows no other host; the service worker leaves other
-   addresses alone. Nothing of the board is sent. The note under the list
-   says when it is not connected, when GitHub refuses the token, when it
-   is offline (the last list stays, with when it was read), and from 30
-   days before the token's 90 run out. Read only for now; a tick that
-   writes back is the next story.
+12. **Kairos** (Pace 6, 2026-10-24; Charter v1.6): N.'s ready steps from
+   the dashboard issue (`nklassen-app/kairos_v3#11`) land on the Backlog as
+   ordinary tasks, marked "Kairos · story" (`whiteboard-v10`). The sync runs
+   each time the app opens or comes back to the front: first the ticks
+   waiting to be sent, then a read. A step not yet on the board is added at
+   the end of the Backlog (never twice: not when it is on Now, edited, or
+   archived); a step ticked in the issue goes to the Archive; a step gone
+   from the issue (Claude applied the tick, or reworded it) leaves Now and
+   the Backlog. Ticking a Kairos task on Now ticks its box in the issue;
+   offline, the tick waits and is sent at the next open. **The app's one
+   outbound door:** `kairosDoor()` reads that one issue and writes back only
+   its own body with one box ticked, with a fine-grained token (only
+   `kairos_v3`, Issues read and write, 90 days), typed into "Connect to
+   Kairos" on the phone and kept under its own key
+   (`whiteboard:kairos-token`), never in the board's document, the export or
+   a copy. A Content-Security-Policy in the page allows no other host; the
+   service worker leaves other addresses alone. Nothing of the board is
+   sent. Kairos tasks carry no program, so the export holds them back. The
+   note under "Kairos" says when it last synced and what changed, when it is
+   not connected, when GitHub refuses the token or a write, when it is
+   offline (with ticks still to send), and from 30 days before the token's
+   90 run out.
 
 ## Run locally
 

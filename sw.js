@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v9';   // Pace 6: Kairos tasks, read from the dashboard issue   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v10';  // Pace 6: Kairos tasks on the backlog, ticks written back to the issue   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

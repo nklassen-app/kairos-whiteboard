@@ -332,10 +332,11 @@ test('the open export follows the board: a task pushed to Now moves from next to
   assert.deepEqual(x.now.map(t => t.text), ['Fix the gate latch', 'Brief the cleaner']);
 });
 
-/* ---- Kairos (Pace 6, Charter v1.6): the dashboard issue, read only ---- */
+/* ---- Kairos (Pace 6, Charter v1.6): the dashboard issue, synced with the board ---- */
 
 const TOKEN_KEY = 'whiteboard:kairos-token';
-const LIST_KEY = 'whiteboard:kairos';
+const SYNC_KEY = 'whiteboard:kairos';
+const TICKS_KEY = 'whiteboard:kairos-ticks';
 const ISSUE = 'https://api.github.com/repos/nklassen-app/kairos_v3/issues/11';
 const TOKEN = { token: 'github_pat_madeup123', since: NOW - 5 * DAY };
 // A made-up dashboard body in dashboard.py's shape — never the real issue.
@@ -356,8 +357,20 @@ const BODY = [
   '### Recently done (since 2026-09-13)',
   '- [ ] Not a step — a line after the done heading <!-- k:dddddddddd -->',
 ].join('\n');
+const ROSES = 'Pick the bed for the roses in garden.md — 10 min';
+const SHED = 'Decide whether the shed has been tried enough — 2 min';
 const answer = (body, status = 200) => () => Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve({ body }) });
-const settle = async h => { for (let i = 0; i < 5; i++) await h.tick(); };
+// A stand-in for the issue: GET answers its body, PATCH replaces it.
+function issue(body){
+  const it = { body, writes: [] };
+  it.fetch = (url, opts) => {
+    if (opts.method === 'PATCH'){ it.body = JSON.parse(opts.body).body; it.writes.push(it.body); }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ body: it.body }) });
+  };
+  return it;
+}
+const settle = async h => { for (let i = 0; i < 10; i++) await h.tick(); };
+const texts = list => list.map(t => t.text);
 
 test('the page may call one outside address, api.github.com; the page has one network call and the worker leaves other addresses alone', () => {
   const csp = HTML.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
@@ -367,7 +380,7 @@ test('the page may call one outside address, api.github.com; the page has one ne
   assert.match(csp[1], /connect-src 'self' https:\/\/api\.github\.com;/);
   assert.match(csp[1], /default-src 'self'/);
   assert.equal((HTML.match(/fetch\(/g) || []).length, 1, 'one fetch in the page');
-  assert.match(HTML, /async function kairosDoor\(token\)\{\n  const res = await fetch\(ISSUE,/, 'and it is the door, to the one issue');
+  assert.match(HTML, /async function kairosDoor\(token, body\)\{\n  const res = await fetch\(ISSUE,/, 'and it is the door, to the one issue');
   assert.equal((HTML.match(/https:\/\/api\.github\.com\/[^'"\s]*/g) || []).filter(u => !u.endsWith('/')).length, 1, 'one API address in the code');
   assert.match(SW, /if \(new URL\(e\.request\.url\)\.origin !== self\.location\.origin\) return;/);
 });
@@ -380,45 +393,107 @@ test('not connected: no call is made, the connect field is open, and says so', a
   assert.match(h.$('#kairos-note').textContent, /Not connected/);
 });
 
-test('connected: the one issue is read with the token, and N.\'s open steps show as tasks; ticked ones and the done list do not', async () => {
-  const h = boot({ store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
+test('connected: the one issue is read with the token, and N.\'s open steps land on the backlog as ordinary tasks; ticked ones and the done list do not', async () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Mow the lawn' }], archive: [] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
   await settle(h);
   assert.equal(h.calls.length, 1);
   const { url, opts } = h.calls[0];
   assert.equal(url, ISSUE);
   assert.equal(opts.method, 'GET');
-  assert.equal(opts.body, undefined, 'nothing is sent');
+  assert.equal(opts.body, undefined, 'a read sends nothing');
   assert.equal(opts.headers.Authorization, 'Bearer github_pat_madeup123');
-  assert.deepEqual(h.$$('#kairos .task').map(n => n.firstChild.textContent),
-    ['Pick the bed for the roses in garden.md — 10 min', 'Decide whether the shed has been tried enough — 2 min']);
-  assert.deepEqual(h.$$('#kairos .meta').map(n => n.textContent), ['Garden plan · Garden plan 3', 'Toolshed']);
-  assert.equal(h.$('#kairos-head').textContent, 'Kairos · 2');
-  assert.equal(h.$('#kairos-note').textContent, '');
+  const b = h.stored().backlog;
+  assert.deepEqual(texts(b), ['Mow the lawn', ROSES, SHED], 'after what was there');
+  assert.deepEqual(b.slice(1).map(t => [t.kairos, t.from]), [['aaaaaaaaaa', 'Garden plan 3'], ['cccccccccc', 'Toolshed']]);
+  assert.deepEqual(h.$$('#backlog .from').map(n => n.textContent), ['Kairos · Garden plan 3', 'Kairos · Toolshed']);
+  assert.match(h.$('#kairos-note').textContent, /^Synced 1\d:00\. 2 new tasks on the backlog\.$/);
+  assert.equal(h.$$('#backlog [data-push]').length, 3, 'each can go to Now like any task');
 });
 
-test('nothing of the board crosses: the call carries no task, program or archive text, and the token never enters the board or the export', async () => {
-  const seed = { active: [{ id: 'a', text: 'Secret family plan', since: NOW, program: 'p' }], backlog: [{ id: 'b', text: 'Private errand' }],
-    archive: [{ id: 'c', text: 'Old private task', done: NOW }], programs: [{ id: 'p', name: 'Private program' }] };
-  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
+test('a sync never adds a step twice: not when it is on Now, edited, or already ticked', async () => {
+  const seed = { active: [{ id: 'a', text: 'Roses, my words', kairos: 'aaaaaaaaaa', from: 'Garden plan 3', since: NOW }], backlog: [],
+    archive: [{ id: 'c', text: SHED, kairos: 'cccccccccc', done: NOW - DAY }] };
+  const it = issue(BODY); // the shed still open in the issue: ticked here, and the tick already sent before Claude applied it
+  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: it.fetch });
   await settle(h);
-  const sent = JSON.stringify(h.calls);
-  for (const word of ['Secret family plan', 'Private errand', 'Old private task', 'Private program']) assert.ok(!sent.includes(word), word);
+  assert.deepEqual(texts(h.stored().active), ['Roses, my words']);
+  assert.deepEqual(texts(h.stored().backlog), []);
+  assert.match(h.$('#kairos-note').textContent, /^Synced 1\d:00\.$/);
+});
+
+test('ticking a Kairos task on Now ticks exactly its box in the issue, and nothing of the board is sent', async () => {
+  const seed = { active: [{ id: 'a', text: 'Roses, my words', kairos: 'aaaaaaaaaa', from: 'Garden plan 3', since: NOW, program: 'p' }],
+    backlog: [{ id: 'b', text: 'Private errand' }], archive: [{ id: 'z', text: 'Old private task', done: NOW }], programs: [{ id: 'p', name: 'Private program' }] };
+  const it = issue(BODY);
+  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: it.fetch });
+  await settle(h);
+  h.click('[data-done="a"]');
+  await new Promise(r => setTimeout(r, 520));
+  await settle(h);
+  assert.equal(it.writes.length, 1, 'one write');
+  const before = BODY.split('\n'), after = it.writes[0].split('\n');
+  const changed = before.map((l, i) => l !== after[i] ? i : -1).filter(i => i >= 0);
+  assert.equal(after.length, before.length);
+  assert.deepEqual(changed, [7], 'one line changed');
+  assert.equal(after[7], before[7].replace('- [ ] ', '- [x] '), 'its box, ticked');
+  const patch = h.calls.find(c => c.opts.method === 'PATCH');
+  assert.equal(patch.url, ISSUE);
+  assert.deepEqual(Object.keys(JSON.parse(patch.opts.body)), ['body']);
+  for (const word of ['Roses, my words', 'Private errand', 'Old private task', 'Private program']) assert.ok(!JSON.stringify(h.calls).includes(word), word);
+  assert.deepEqual(h.w.localStorage.getItem(TICKS_KEY), '[]', 'nothing left to send');
+  assert.deepEqual(texts(h.stored().archive), ['Roses, my words', 'Old private task'], 'the task is archived as usual');
+  assert.deepEqual(texts(h.stored().backlog), ['Private errand', SHED], 'and the read after the write does not bring it back');
   assert.ok(!JSON.stringify(h.stored()).includes('github_pat_'), 'the token is not in the board document');
   h.click('#export');
   assert.ok(!h.$('#export-doc').textContent.includes('github_pat_'), 'nor in the export');
-  assert.ok(!h.$('#export-doc').textContent.includes('Pick the bed'), 'and the Kairos list is not exported either');
+  assert.ok(!h.$('#export-doc').textContent.includes('Pick the bed'), 'and Kairos tasks, having no program, are held back');
 });
 
-test('a refused token says so and reopens the connect field; offline shows the last list read, with when', async () => {
+test('a tick made offline waits, says so, and is sent at the next sync; a box no longer open is not written', async () => {
+  const seed = { active: [{ id: 'a', text: ROSES, kairos: 'aaaaaaaaaa', since: NOW }], backlog: [], archive: [] };
+  const off = boot({ seed, store: { [TOKEN_KEY]: TOKEN, [SYNC_KEY]: { at: NOW - DAY } } });
+  await settle(off);
+  off.click('[data-done="a"]');
+  await new Promise(r => setTimeout(r, 520));
+  await settle(off);
+  assert.equal(off.w.localStorage.getItem(TICKS_KEY), '["aaaaaaaaaa"]');
+  assert.match(off.$('#kairos-note').textContent, /Could not reach GitHub\. Last synced 19 Sept, 1\d:00\. 1 tick will be sent next time\./);
+  const board = JSON.parse(off.w.localStorage.getItem(KEY));
+  const it = issue(BODY);
+  const on = boot({ seed: board, store: { [TOKEN_KEY]: TOKEN, [TICKS_KEY]: ['aaaaaaaaaa', 'bbbbbbbbbb'] }, fetch: it.fetch });
+  await settle(on);
+  assert.equal(it.writes.length, 1, 'only the open box is written; the one already ticked is not');
+  assert.match(it.body, /- \[x\] Garden plan 3/);
+  assert.equal(on.w.localStorage.getItem(TICKS_KEY), '[]');
+  assert.deepEqual(texts(on.stored().backlog), [SHED]);
+});
+
+test('a step ticked in the issue goes to the archive; a step gone from it leaves the board; a wrong answer changes nothing', async () => {
+  const seed = { active: [{ id: 'a', text: 'Mulch', kairos: 'bbbbbbbbbb', since: NOW }],
+    backlog: [{ id: 'g', text: 'An old step', kairos: 'eeeeeeeeee' }, { id: 'm', text: 'Mine' }], archive: [] };
+  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
+  await settle(h);
+  assert.deepEqual(texts(h.stored().active), []);
+  assert.deepEqual(texts(h.stored().archive), ['Mulch']);
+  assert.deepEqual(texts(h.stored().backlog), ['Mine', ROSES, SHED]);
+  assert.match(h.$('#kairos-note').textContent, /2 new tasks on the backlog; 2 tasks done or changed in Kairos, taken off\./);
+  const wrong = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer('Not Found') });
+  await settle(wrong);
+  const kept = wrong.stored();
+  assert.deepEqual([kept.active, kept.backlog, kept.archive], [seed.active, seed.backlog, seed.archive], 'a body without the dashboard marker empties nothing');
+  assert.match(wrong.$('#kairos-note').textContent, /Could not reach GitHub/);
+});
+
+test('a refused token says so and reopens the connect field; a token that cannot write says what it needs', async () => {
   const refused = boot({ store: { [TOKEN_KEY]: TOKEN }, fetch: answer('', 401) });
   await settle(refused);
   assert.match(refused.$('#kairos-note').textContent, /refused the token/);
   assert.ok(refused.$('#kairos-connect').open);
-  const offline = boot({ store: { [TOKEN_KEY]: TOKEN, [LIST_KEY]: { at: NOW - DAY, tasks: [{ key: 'aaaaaaaaaa', epic: 'Garden plan', story: 'Garden plan 3', text: 'Pick the bed' }] } } });
-  await settle(offline);
-  assert.equal(offline.calls.length, 1, 'it tried');
-  assert.equal(offline.$$('#kairos .task').length, 1, 'the last list still shows');
-  assert.match(offline.$('#kairos-note').textContent, /Could not reach GitHub\. This is the list from 19 Sept/);
+  const readOnly = boot({ store: { [TOKEN_KEY]: TOKEN, [TICKS_KEY]: ['aaaaaaaaaa'] },
+    fetch: (url, opts) => opts.method === 'PATCH' ? answer('', 403)() : answer(BODY)() });
+  await settle(readOnly);
+  assert.match(readOnly.$('#kairos-note').textContent, /Issues read and write.*1 tick will be sent then/);
+  assert.equal(readOnly.w.localStorage.getItem(TICKS_KEY), '["aaaaaaaaaa"]', 'the tick is kept');
 });
 
 test('the token warns 30 days before its 90 run out, and says when it may have run out', async () => {
@@ -427,13 +502,13 @@ test('the token warns 30 days before its 90 run out, and says when it may have r
   assert.match(soon.$('#kairos-note').textContent, /runs out in 20 days/);
   const fresh = boot({ store: { [TOKEN_KEY]: { ...TOKEN, since: NOW - 59 * DAY } }, fetch: answer(BODY) });
   await settle(fresh);
-  assert.equal(fresh.$('#kairos-note').textContent, '');
+  assert.doesNotMatch(fresh.$('#kairos-note').textContent, /run/);
   const old = boot({ store: { [TOKEN_KEY]: { ...TOKEN, since: NOW - 91 * DAY } }, fetch: answer(BODY) });
   await settle(old);
   assert.match(old.$('#kairos-note').textContent, /may have run out/);
 });
 
-test('connecting takes only a fine-grained token, stores it apart from the board, and reads the issue at once', async () => {
+test('connecting takes only a fine-grained token, stores it apart from the board, and syncs at once', async () => {
   const h = boot({ fetch: answer(BODY) });
   await settle(h);
   h.$('#kairos-token').value = 'ghp_classic123';
@@ -446,5 +521,5 @@ test('connecting takes only a fine-grained token, stores it apart from the board
   assert.deepEqual(JSON.parse(h.w.localStorage.getItem(TOKEN_KEY)), { token: 'github_pat_madeup123', since: NOW });
   assert.equal(h.$('#kairos-token').value, '', 'the field is cleared');
   assert.equal(h.calls.length, 1);
-  assert.equal(h.$$('#kairos .task').length, 2);
+  assert.deepEqual(texts(h.stored().backlog), [ROSES, SHED]);
 });

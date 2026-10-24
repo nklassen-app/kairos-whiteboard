@@ -108,13 +108,10 @@
   .export{margin-top:22px;}
   .export .xdoc{font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;background:#fff;border:1.5px solid var(--edge);border-radius:8px;padding:10px 12px;margin:8px 0 0;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;}
   .export .btns{display:flex;gap:8px;margin-top:8px;}
-  /* Kairos (Pace 6): the ready steps from the dashboard issue, read only */
+  /* Kairos (Pace 6): the dashboard issue, synced with the board */
   .kairos{margin-top:22px;}
-  .kairos .row{padding:10px 2px;}
-  .kairos .row + .row{border-top:1px solid #e6e9e4;}
-  .kairos .task{font-size:15px;cursor:default;}
-  .kairos .meta{display:block;font-size:12px;color:var(--graphite);opacity:.8;}
   .kairos details{margin:10px 0 0;}
+  .from{display:block;font-size:12px;color:var(--graphite);opacity:.8;margin-top:2px;}
   .kairos input{min-width:0;}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
@@ -134,8 +131,7 @@
   </section>
 
   <section class="kairos">
-    <h2 id="kairos-head">Kairos</h2>
-    <div id="kairos"></div>
+    <h2>Kairos</h2>
     <p class="note" id="kairos-note"></p>
     <details id="kairos-connect">
       <summary>Connect to Kairos</summary>
@@ -182,7 +178,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v9</span>
+<span class="ver">whiteboard-v10</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -275,6 +271,9 @@ function picker(t){
   return `<select class="prog${t.program ? ' set' : ''}" data-prog="${t.id}" aria-label="Program for ${esc(t.text)}"><option value="">no program</option>${opts}</select>`;
 }
 
+// A task that came from the Kairos dashboard says where, under its text.
+const from = t => t.kairos ? `<span class="from">Kairos · ${esc(t.from || '')}</span>` : '';
+
 function render(){
   const n = openCount();
   const c = $('count');
@@ -292,7 +291,7 @@ function render(){
         <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${picker(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}</div>
         <span class="age" data-age="${t.id}">${age(t)}</span>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
@@ -302,7 +301,7 @@ function render(){
   b.innerHTML = state.backlog.length
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${picker(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}</div>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
@@ -329,84 +328,142 @@ function render(){
 // The Whiteboard's one outbound door. kairosDoor() is the only network call
 // in this page, and it reaches exactly one address: issue #11 of
 // nklassen-app/kairos_v3, the dashboard. The CSP in <head> refuses any other
-// host. It only reads (the write-back of a tick is the next story); nothing
-// of the board is ever sent. The token sits under its own key, outside the
-// board's document, so no export or copy can carry it.
+// host. It reads the issue, and writes back only the issue's own body with
+// one checkbox ticked (tickInIssue checks that nothing else changed) —
+// nothing of the board is ever sent. The token sits under its own key,
+// outside the board's document, so no export or copy can carry it.
+//
+// The sync, on every open of the app: first the ticks waiting to be sent,
+// then a read. A ready step that is not on the board yet lands on the
+// backlog as an ordinary task (`kairos`: its key, `from`: its story). A
+// step ticked in the issue goes to the archive; a step gone from the issue
+// (Claude applied the tick, or reworded it) leaves Now and the backlog.
 const TOKEN_KEY = 'whiteboard:kairos-token';   // { token, since }
-const KAIROS_KEY = 'whiteboard:kairos';         // the last list read: { at, tasks }
+const KAIROS_KEY = 'whiteboard:kairos';         // { at }: the last good sync
+const TICKS_KEY = 'whiteboard:kairos-ticks';    // keys ticked here, not yet in the issue
 const ISSUE = 'https://api.github.com/repos/nklassen-app/kairos_v3/issues/11';
 const TOKEN_DAYS = 90, WARN_DAYS = 30;
 
 const readKey = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
 const writeKey = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const pendingTicks = () => readKey(TICKS_KEY) || [];
 
-async function kairosDoor(token){
-  const res = await fetch(ISSUE, { method: 'GET', cache: 'no-store', headers: {
+async function kairosDoor(token, body){
+  const res = await fetch(ISSUE, { method: body == null ? 'GET' : 'PATCH', cache: 'no-store', headers: {
     Authorization: 'Bearer ' + token,
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
-  } });
+    ...(body == null ? {} : { 'Content-Type': 'application/json' }),
+  }, ...(body == null ? {} : { body: JSON.stringify({ body }) }) });
   if (!res.ok){ const err = new Error('refused'); err.status = res.status; throw err; }
   return (await res.json()).body || '';
 }
 
 // The dashboard's own lines (dashboard.py): an epic line "**Epic** — …" and
-// N.'s open steps "- [ ] Story · task <!-- k:… -->". Ticked boxes, the
-// "Recently done" list and everything else are skipped.
+// N.'s steps "- [ ] Story · task <!-- k:… -->". Open steps are tasks; the
+// keys of ticked ones are noted; the "Recently done" list and everything
+// else are skipped. A body without the dashboard's marker reads as null, so
+// a wrong answer can never empty the board.
 function kairosTasks(body){
-  const tasks = [];
+  if (!body.includes('<!-- kairos-dashboard')) return null;
+  const tasks = [], ticked = [];
   let epic = '';
   for (const line of body.split(/\r?\n/)){
     if (line.startsWith('### Recently done')) break;
     const e = line.match(/^\*\*(.+?)\*\* — /);
     if (e){ epic = e[1]; continue; }
-    const m = line.match(/^- \[ \] (.*?)\s*<!-- k:([0-9a-f]{10}) -->\s*$/);
+    const m = line.match(/^- \[([ xX])\] (.*?)\s*<!-- k:([0-9a-f]{10}) -->\s*$/);
     if (!m) continue;
-    const plain = m[1].replace(/\*\*|`/g, '').trim();
+    if (m[1] !== ' '){ ticked.push(m[3]); continue; }
+    const plain = m[2].replace(/\*\*|`/g, '').trim();
     const s = plain.match(/^(.+? \d+[a-z]?|On trial) · (.*)$/);
-    tasks.push({ key: m[2], epic, story: s ? s[1] : '', text: s ? s[2] : plain });
+    tasks.push({ key: m[3], epic, story: s ? s[1] : '', text: s ? s[2] : plain });
   }
-  return tasks;
+  return { tasks, ticked };
+}
+
+// The issue's body with the one box for `key` ticked, or null when that box
+// is not open there (already ticked, or gone). Exactly one line changes.
+function tickInIssue(body, key){
+  const lines = body.split('\n');
+  const i = lines.findIndex(l => /^- \[ \] /.test(l) && l.includes(`<!-- k:${key} -->`));
+  if (i < 0) return null;
+  lines[i] = lines[i].replace('- [ ] ', '- [x] ');
+  return lines.join('\n');
+}
+
+// Bring the board in step with the issue's steps (see the top of this block).
+function kairosMerge({ tasks, ticked }){
+  const open = new Map(tasks.map(t => [t.key, t]));
+  const done = new Set(ticked), waiting = new Set(pendingTicks());
+  const known = new Set([...state.active, ...state.backlog, ...state.archive].map(t => t.kairos).filter(Boolean));
+  let added = 0, left = 0;
+  for (const list of [state.active, state.backlog]){
+    for (let i = list.length - 1; i >= 0; i--){
+      const t = list[i];
+      if (!t.kairos || open.has(t.kairos) || waiting.has(t.kairos)) continue;
+      list.splice(i, 1);
+      left++;
+      if (done.has(t.kairos)){ delete t.since; t.done = Date.now(); state.archive.unshift(t); }
+    }
+  }
+  for (const t of tasks){
+    if (known.has(t.key)) continue;
+    state.backlog.push({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic });
+    added++;
+  }
+  return { added, left };
 }
 
 const clock = ms => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 const sinceDays = ms => Math.floor((Date.now() - ms) / DAY);
+const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
-function renderKairos(note){
-  const list = readKey(KAIROS_KEY);
-  const tasks = (list && list.tasks) || [];
-  $('kairos-head').textContent = list ? `Kairos · ${tasks.length}` : 'Kairos';
-  $('kairos').innerHTML = tasks.length
-    ? tasks.map(t => `
-      <div class="row" data-kairos="${t.key}">
-        <span class="task">${esc(t.text)}<span class="meta">${esc(t.epic)}${t.story && t.story !== 'On trial' ? ' · ' + esc(t.story) : ''}</span></span>
-      </div>`).join('')
-    : list ? '<p class="note">Nothing waits on you.</p>' : '';
-  $('kairos-note').textContent = note || '';
-}
-
+// One sync at a time; a call during one (a tick, a return to the app) runs
+// once more right after it.
+let syncing = false, again = false;
 async function kairosRefresh(){
   const t = readKey(TOKEN_KEY);
   if (!t || !t.token){
     $('kairos-connect').open = true;
-    renderKairos('Not connected. Your Kairos tasks show here once this phone holds a token.');
+    $('kairos-note').textContent = 'Not connected. Your Kairos tasks land on the backlog once this phone holds a token.';
     return;
   }
+  if (syncing){ again = true; return; }
+  syncing = true;
   const left = TOKEN_DAYS - sinceDays(t.since);
   const expiry = left <= 0 ? ' The token may have run out: make a new one (90 days) and connect again.'
     : left <= WARN_DAYS ? ` The token runs out in ${left} day${left === 1 ? '' : 's'}: make a new one and connect again.` : '';
   try {
-    const tasks = kairosTasks(await kairosDoor(t.token));
-    writeKey(KAIROS_KEY, { at: Date.now(), tasks });
-    renderKairos(expiry.trim());
+    // Ticks first, one box per write, each on a fresh read of the issue.
+    for (const key of pendingTicks()){
+      const ticked = tickInIssue(await kairosDoor(t.token), key);
+      if (ticked != null) await kairosDoor(t.token, ticked);
+      writeKey(TICKS_KEY, pendingTicks().filter(k => k !== key));
+    }
+    const read = kairosTasks(await kairosDoor(t.token));
+    if (!read) throw new Error('not the dashboard');
+    const { added, left: gone } = kairosMerge(read);
+    writeKey(KAIROS_KEY, { at: Date.now() });
+    if (added || gone){ render(); save(); }
+    const news = [added && `${plural(added, 'new task')} on the backlog`, gone && `${plural(gone, 'task')} done or changed in Kairos, taken off`].filter(Boolean).join('; ');
+    $('kairos-note').textContent = (`Synced ${clock(Date.now())}.` + (news ? ` ${news}.` : '') + expiry);
   } catch (err){
-    const list = readKey(KAIROS_KEY);
+    const last = readKey(KAIROS_KEY), wait = pendingTicks().length;
     if (err.status === 401){
       $('kairos-connect').open = true;
-      renderKairos('GitHub refused the token: it has run out or was revoked. Make a new one (90 days) and connect again.');
+      $('kairos-note').textContent = 'GitHub refused the token: it has run out or was revoked. Make a new one (90 days) and connect again.';
+    } else if (err.status === 403 || err.status === 404){
+      $('kairos-connect').open = true;
+      $('kairos-note').textContent = `GitHub refused (${err.status}): the token needs kairos_v3 with Issues read and write. Make one that has both and connect again.`
+        + (wait ? ` ${plural(wait, 'tick')} will be sent then.` : '');
     } else {
-      renderKairos((list ? `Could not reach GitHub. This is the list from ${doneDay(list.at)}, ${clock(list.at)}.` : 'Could not reach GitHub.') + expiry);
+      $('kairos-note').textContent = 'Could not reach GitHub.' + (last && last.at ? ` Last synced ${doneDay(last.at)}, ${clock(last.at)}.` : '')
+        + (wait ? ` ${plural(wait, 'tick')} will be sent next time.` : '') + expiry;
     }
+  } finally {
+    syncing = false;
+    if (again){ again = false; kairosRefresh(); }
   }
 }
 
@@ -591,6 +648,7 @@ function complete(id){
     t.done = Date.now();
     state.archive.unshift(t);
     render(); save();
+    if (t.kairos){ writeKey(TICKS_KEY, [...pendingTicks(), t.kairos]); kairosRefresh(); }
   }, 480);
 }
 
@@ -636,7 +694,6 @@ document.addEventListener('click', e => {
 });
 
 load();
-renderKairos();
 kairosRefresh();
 $('kairos-save').addEventListener('click', kairosConnect);
 document.addEventListener('visibilitychange', () => {
