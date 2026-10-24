@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v8';   // Pace 5: paste several tasks   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v9';   // Pace 6: Kairos tasks, read from the dashboard issue   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
@@ -23,6 +23,9 @@ self.addEventListener('activate', e => {
 // kept showing v3 after v4 was live. 'no-cache' always asks the server first
 // (a 304 when nothing changed), so a deploy shows on the very next open.
 self.addEventListener('fetch', e => {
+  // Another address (the Kairos door to api.github.com, Charter v1.6) is not
+  // this worker's business: never cached, never answered from the cache.
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   if (e.request.mode === 'navigate') {
     e.respondWith(
       fetch(e.request, { cache: 'no-cache' }).then(res => {

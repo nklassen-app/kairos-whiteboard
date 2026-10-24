@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Charter v1.6 (Pace 6): the page may reach its own address and one other,
+     api.github.com, for the Kairos door below. Any other host is refused. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f6f7f5">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -105,6 +108,14 @@
   .export{margin-top:22px;}
   .export .xdoc{font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;background:#fff;border:1.5px solid var(--edge);border-radius:8px;padding:10px 12px;margin:8px 0 0;white-space:pre-wrap;word-break:break-word;max-height:50vh;overflow:auto;}
   .export .btns{display:flex;gap:8px;margin-top:8px;}
+  /* Kairos (Pace 6): the ready steps from the dashboard issue, read only */
+  .kairos{margin-top:22px;}
+  .kairos .row{padding:10px 2px;}
+  .kairos .row + .row{border-top:1px solid #e6e9e4;}
+  .kairos .task{font-size:15px;cursor:default;}
+  .kairos .meta{display:block;font-size:12px;color:var(--graphite);opacity:.8;}
+  .kairos details{margin:10px 0 0;}
+  .kairos input{min-width:0;}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
@@ -120,6 +131,20 @@
   <section>
     <h2>Now</h2>
     <div class="board" id="active"></div>
+  </section>
+
+  <section class="kairos">
+    <h2 id="kairos-head">Kairos</h2>
+    <div id="kairos"></div>
+    <p class="note" id="kairos-note"></p>
+    <details id="kairos-connect">
+      <summary>Connect to Kairos</summary>
+      <p class="note">Paste a fine-grained GitHub token: only <b>kairos_v3</b>, Issues read and write, 90 days. It stays on this phone and is never exported.</p>
+      <div class="capture" style="margin-top:8px">
+        <input id="kairos-token" type="password" placeholder="github_pat_…" autocomplete="off">
+        <button class="add" id="kairos-save" type="button">Connect</button>
+      </div>
+    </details>
   </section>
 
   <section class="backlog">
@@ -157,7 +182,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v8</span>
+<span class="ver">whiteboard-v9</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -299,7 +324,105 @@ function render(){
   renderExport();
 }
 
-/* ---- Export for agent (Agent design 5): the app's one door ---- */
+/* ---- Kairos (Pace 6, Charter v1.6): the dashboard issue, read on the phone ---- */
+
+// The Whiteboard's one outbound door. kairosDoor() is the only network call
+// in this page, and it reaches exactly one address: issue #11 of
+// nklassen-app/kairos_v3, the dashboard. The CSP in <head> refuses any other
+// host. It only reads (the write-back of a tick is the next story); nothing
+// of the board is ever sent. The token sits under its own key, outside the
+// board's document, so no export or copy can carry it.
+const TOKEN_KEY = 'whiteboard:kairos-token';   // { token, since }
+const KAIROS_KEY = 'whiteboard:kairos';         // the last list read: { at, tasks }
+const ISSUE = 'https://api.github.com/repos/nklassen-app/kairos_v3/issues/11';
+const TOKEN_DAYS = 90, WARN_DAYS = 30;
+
+const readKey = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
+const writeKey = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+async function kairosDoor(token){
+  const res = await fetch(ISSUE, { method: 'GET', cache: 'no-store', headers: {
+    Authorization: 'Bearer ' + token,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  } });
+  if (!res.ok){ const err = new Error('refused'); err.status = res.status; throw err; }
+  return (await res.json()).body || '';
+}
+
+// The dashboard's own lines (dashboard.py): an epic line "**Epic** — …" and
+// N.'s open steps "- [ ] Story · task <!-- k:… -->". Ticked boxes, the
+// "Recently done" list and everything else are skipped.
+function kairosTasks(body){
+  const tasks = [];
+  let epic = '';
+  for (const line of body.split(/\r?\n/)){
+    if (line.startsWith('### Recently done')) break;
+    const e = line.match(/^\*\*(.+?)\*\* — /);
+    if (e){ epic = e[1]; continue; }
+    const m = line.match(/^- \[ \] (.*?)\s*<!-- k:([0-9a-f]{10}) -->\s*$/);
+    if (!m) continue;
+    const plain = m[1].replace(/\*\*|`/g, '').trim();
+    const s = plain.match(/^(.+? \d+[a-z]?|On trial) · (.*)$/);
+    tasks.push({ key: m[2], epic, story: s ? s[1] : '', text: s ? s[2] : plain });
+  }
+  return tasks;
+}
+
+const clock = ms => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+const sinceDays = ms => Math.floor((Date.now() - ms) / DAY);
+
+function renderKairos(note){
+  const list = readKey(KAIROS_KEY);
+  const tasks = (list && list.tasks) || [];
+  $('kairos-head').textContent = list ? `Kairos · ${tasks.length}` : 'Kairos';
+  $('kairos').innerHTML = tasks.length
+    ? tasks.map(t => `
+      <div class="row" data-kairos="${t.key}">
+        <span class="task">${esc(t.text)}<span class="meta">${esc(t.epic)}${t.story && t.story !== 'On trial' ? ' · ' + esc(t.story) : ''}</span></span>
+      </div>`).join('')
+    : list ? '<p class="note">Nothing waits on you.</p>' : '';
+  $('kairos-note').textContent = note || '';
+}
+
+async function kairosRefresh(){
+  const t = readKey(TOKEN_KEY);
+  if (!t || !t.token){
+    $('kairos-connect').open = true;
+    renderKairos('Not connected. Your Kairos tasks show here once this phone holds a token.');
+    return;
+  }
+  const left = TOKEN_DAYS - sinceDays(t.since);
+  const expiry = left <= 0 ? ' The token may have run out: make a new one (90 days) and connect again.'
+    : left <= WARN_DAYS ? ` The token runs out in ${left} day${left === 1 ? '' : 's'}: make a new one and connect again.` : '';
+  try {
+    const tasks = kairosTasks(await kairosDoor(t.token));
+    writeKey(KAIROS_KEY, { at: Date.now(), tasks });
+    renderKairos(expiry.trim());
+  } catch (err){
+    const list = readKey(KAIROS_KEY);
+    if (err.status === 401){
+      $('kairos-connect').open = true;
+      renderKairos('GitHub refused the token: it has run out or was revoked. Make a new one (90 days) and connect again.');
+    } else {
+      renderKairos((list ? `Could not reach GitHub. This is the list from ${doneDay(list.at)}, ${clock(list.at)}.` : 'Could not reach GitHub.') + expiry);
+    }
+  }
+}
+
+function kairosConnect(){
+  const token = $('kairos-token').value.trim();
+  if (!/^github_pat_\w+$/.test(token)){
+    $('kairos-note').textContent = 'That is not a fine-grained token: they start with github_pat_.';
+    return;
+  }
+  writeKey(TOKEN_KEY, { token, since: Date.now() });
+  $('kairos-token').value = '';
+  $('kairos-connect').open = false;
+  kairosRefresh();
+}
+
+/* ---- Export for agent (Agent design 5): the one door for what an agent gets, copied by hand ---- */
 
 // Everything that leaves the Whiteboard for an agent is built here, from an
 // allow-list. In: the text and program name of each task on Now (with its
@@ -513,6 +636,12 @@ document.addEventListener('click', e => {
 });
 
 load();
+renderKairos();
+kairosRefresh();
+$('kairos-save').addEventListener('click', kairosConnect);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') kairosRefresh();
+});
 // updateViaCache:'none' keeps the HTTP cache out of sw.js checks, and every
 // return to the foreground forces one — belt and braces for WebViews that
 // skip the automatic re-check.
