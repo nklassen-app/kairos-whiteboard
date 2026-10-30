@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v12';  // nothing on Now longer than five days   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v13';  // a stuck task: talk it through, blocked, let go   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

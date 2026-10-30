@@ -17,18 +17,20 @@ The Floor (`kairos-floor`).
    midnight that would make it six, it goes back to the top of the Backlog
    by itself, its Now count cleared, and the note under the Backlog says
    so. Checked each time the app opens or comes back to the front.
-3. Its only exit is the tick on the Now board, which moves it to the
-   **Archive**, stamped with the day it was ticked. No undo. The Archive
+3. It leaves the board by the tick on the Now board, which moves it to the
+   **Archive**, stamped with the day it was ticked, or by **let go** on a
+   stuck task (13), archived marked *let go*. No undo. The Archive
    (collapsed at the bottom) lists finished tasks newest first, with the day
    and the program; nothing there can be edited or brought back.
 4. Text can be edited in place anywhere (tap it). Saving empty text keeps the
    original, so editing can never delete.
-5. No delete, no reorder, no priority, and no demote by hand: the only way
-   back from Now is the five-day rule (2).
+5. No delete (let go archives, 13), no reorder, no priority, and no demote
+   by hand: the only way back from Now is the five-day rule (2).
 6. State is one JSON document in `localStorage` under `whiteboard:v1`, on one
-   device: `{ active: [{id, text, since, program?}], backlog: [{id, text,
-   program?}], archive: [{id, text, done, program?}], programs: [{id, name}]
-   }` (`since`/`done` epoch ms). No backup, no sync.
+   device: `{ active: [{id, text, since, added, paused?, program?}], backlog: [{id,
+   text, added, paused?, program?}], archive: [{id, text, done, letGo?,
+   program?}], programs: [{id, name}] }` (`since`/`added`/`paused`/`done`
+   epoch ms; Kairos tasks add `kairos` and `from`). No backup, no sync.
 7. A task on Now shows, at the right of its row, how long it has been there
    (today · 1 day · N days), counted in calendar days from the day it was
    pushed up — it turns over at midnight, not 24 hours after the exact
@@ -84,6 +86,21 @@ The Floor (`kairos-floor`).
    not connected, when GitHub refuses the token or a write, when it is
    offline (with ticks still to send), and from 30 days before the token's
    90 run out.
+13. **A stuck task** (Whiteboard flow 2, N., 2026-10-30): a task on the
+   board, Now or Backlog, for more than ten days — counted in calendar days
+   from `added`, stamped when it joins (tasks from before then: at their
+   first load after the update) — shows "N days on the board" and three
+   buttons. **Talk it through** copies a prompt with the task into the
+   clipboard, to paste into Claude: why isn't it moving (blocked, too big,
+   unclear, not mine, not wanted), then one move (steps, delegate, reword,
+   let go), ending in plain lines that paste back as tasks (11). Only for
+   tasks the export would share (10) and Kairos steps; any other stuck task
+   gets the marker but no button, and no copy of its text is made. The
+   prompt carries the task's text, its program's name or Kairos story, and
+   its days; nothing else of the board, and no network call. **blocked**
+   quiets the marker and starts the ten days over (`paused`). **let go**
+   moves it to the Archive marked *let go*, not counted as done in the
+   export; not offered on a Kairos step, which is let go in the backlog.
 
 ## Run locally
 
