@@ -111,6 +111,8 @@
   /* Kairos (Pace 6): the dashboard issue, synced with the board */
   .kairos{margin-top:22px;}
   .kairos details{margin:10px 0 0;}
+  .stuck{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--red);margin-top:4px;}
+  .stuck .copy.talk{color:var(--blue);border-color:var(--blue);}
   .from{display:block;font-size:12px;color:var(--graphite);opacity:.8;margin-top:2px;}
   .kairos input{min-width:0;}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
@@ -178,7 +180,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v12</span>
+<span class="ver">whiteboard-v13</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -205,13 +207,13 @@ const openCount = () => state.active.length;
 // DST shift, which makes a local day worth 23 or 25 real hours, doesn't
 // push the count off by one.)
 const DAY = 86400000;
-const daysOn = t => {
-  if (!t.since) return null;
-  const since = new Date(t.since), now = new Date();
+const daysSince = ms => {
+  const since = new Date(ms), now = new Date();
   const sinceMidnight = new Date(since.getFullYear(), since.getMonth(), since.getDate()).getTime();
   const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return Math.round((nowMidnight - sinceMidnight) / DAY);
 };
+const daysOn = t => t.since ? daysSince(t.since) : null;
 const age = t => { const d = daysOn(t); return d == null ? '' : d <= 0 ? 'today' : d === 1 ? '1 day' : d + ' days'; };
 
 // Nothing stays on Now longer than five days (N., 2026-10-30): a task can
@@ -235,6 +237,16 @@ function sweepNow(){
   $('status').textContent = `${n === 1 ? '1 task' : n + ' tasks'} back from Now after ${MAX_DAYS} days.`;
 }
 
+// A task on the board longer than ten days, Now or backlog, is stuck
+// (Whiteboard flow 2, N., 2026-10-30): its row offers to talk it through
+// with Claude, to mark it blocked, or to let it go. `added` is stamped when
+// a task joins the board (tasks from before then: at their first load
+// after the update); "blocked" stamps `paused`, which starts the ten days
+// over. Neither stamp is ever exported.
+const STUCK_DAYS = 10;
+const onBoard = t => daysSince(t.paused || t.added);
+const stuck = t => t.added && onBoard(t) > STUCK_DAYS;
+
 async function load(){
   try {
     const raw = localStorage.getItem(KEY);
@@ -252,6 +264,7 @@ async function load(){
   }
   let stamped = false;
   for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
+  for (const t of state.active.concat(state.backlog)) if (!t.added){ t.added = Date.now(); stamped = true; }
   const back = sendBackStale();
   render();
   if (stamped || seeded || back) save();
@@ -282,6 +295,14 @@ function picker(t){
   return `<select class="prog${t.program ? ' set' : ''}" data-prog="${t.id}" aria-label="Program for ${esc(t.text)}"><option value="">no program</option>${opts}</select>`;
 }
 
+// A stuck task's bar: how long, and what to do about it. Talk it through
+// only where the task may reach Claude (talkable); let go never on a Kairos
+// step — that one is decided in the backlog, in a session.
+const stuckBar = t => !stuck(t) ? '' : `<span class="stuck">${onBoard(t)} days on the board`
+  + (talkable(t) ? ` <button class="copy talk" data-talk="${t.id}">Talk it through</button>` : '')
+  + ` <button class="copy" data-blocked="${t.id}">blocked</button>`
+  + (t.kairos ? '' : ` <button class="copy" data-letgo="${t.id}">let go</button>`) + '</span>';
+
 // A task that came from the Kairos dashboard says where, under its text.
 const from = t => t.kairos ? `<span class="from">Kairos · ${esc(t.from || '')}</span>` : '';
 
@@ -302,7 +323,7 @@ function render(){
         <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}${stuckBar(t)}</div>
         <span class="age" data-age="${t.id}">${age(t)}</span>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
@@ -312,7 +333,7 @@ function render(){
   b.innerHTML = state.backlog.length
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}${stuckBar(t)}</div>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
@@ -322,7 +343,7 @@ function render(){
   $('archive').innerHTML = state.archive.length
     ? state.archive.map(t => `
       <div class="row" data-row="${t.id}">
-        <span class="task">${esc(t.text)}<span class="meta">${doneDay(t.done)}${t.program && programName(t.program) ? ' · ' + esc(programName(t.program)) : ''}</span></span>
+        <span class="task">${esc(t.text)}<span class="meta">${t.letGo ? 'let go · ' : ''}${doneDay(t.done)}${t.program && programName(t.program) ? ' · ' + esc(programName(t.program)) : ''}</span></span>
       </div>`).join('')
     : '<p class="note">Nothing ticked off yet.</p>';
 
@@ -420,7 +441,7 @@ function kairosMerge({ tasks, ticked }){
   }
   for (const t of tasks){
     if (known.has(t.key)) continue;
-    state.backlog.push({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic });
+    state.backlog.push({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic, added: Date.now() });
     added++;
   }
   return { added, left };
@@ -516,7 +537,7 @@ function agentExport(){
     about: 'N.\'s own tasks. now: on the Now list (at most seven), with days there; next: the backlog. held_back: tasks under private programs, left out on purpose.',
     now: state.active.filter(shared).map(t => ({ text: t.text, program: programName(t.program), days_on_now: daysOn(t) })),
     next: state.backlog.filter(shared).map(t => ({ text: t.text, program: programName(t.program) })),
-    done_this_week: state.archive.filter(t => t.done >= monday).length,
+    done_this_week: state.archive.filter(t => t.done >= monday && !t.letGo).length,
     held_back: all.filter(t => !shared(t)).length,
   };
 }
@@ -533,18 +554,85 @@ function copyExport(){
   const text = agentText();
   const btn = $('export-copy');
   const did = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
-  const fail = () => { $('export-note').textContent = 'Could not copy — select the text and copy it by hand.'; };
+  clip(text, did, () => { $('export-note').textContent = 'Could not copy — select the text and copy it by hand.'; });
+}
+
+/* ---- Talk it through (Whiteboard flow 2): a stuck task, copied into Claude by hand ---- */
+
+// What may reach Claude is the export's allow-list — tasks under a SHARED
+// program — plus Kairos steps, which come from GitHub already (N.,
+// 2026-10-30). Everything else gets the marker but no button: no copy of
+// its text is ever made here. The prompt carries the task's text, its
+// program's name or Kairos story, and how long it has sat; nothing else of
+// the board. No network call: N. pastes it into Claude.
+const talkable = t => SHARED.has(t.program) || !!t.kairos;
+function talkText(t){
+  const where = state.active.includes(t) ? 'on my Now list' : 'in my backlog';
+  const tag = t.kairos ? ` (Kairos · ${t.from || 'a step'})` : ` (program: ${programName(t.program)})`;
+  return `This task has sat on my Whiteboard for ${onBoard(t)} days, now ${where}:
+"${t.text}"${tag}
+
+Help me find out why it isn't moving. Ask me one short question at a time.
+First find which it is: blocked by something outside me, too big, unclear,
+not really mine to do, or something I don't actually want.
+Then help me with one move: break it into small steps (the first one doable
+in 15 minutes), delegate it (to whom, with the message drafted), reword it
+so it is something I'd start, or let it go. If it is blocked, that is fine:
+say so and stop.
+
+End with the result as plain lines I can paste into my Whiteboard: one task
+per line, no headings, no numbering.
+`;
+}
+
+// One clipboard helper: the Clipboard API first, a textarea fallback for
+// WebViews without it.
+function clip(text, did, fail){
   if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(did, fail); return; }
   const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
   let ok = false; try { ok = document.execCommand && document.execCommand('copy'); } catch (e) {}
   ta.remove(); (ok ? did : fail)();
 }
 
+function talk(id, btn){
+  const t = findTask(id);
+  if (!t || !talkable(t)) return;
+  clip(talkText(t), () => {
+    btn.textContent = 'copied — paste into Claude'; btn.classList.add('did');
+    setTimeout(() => { btn.textContent = 'Talk it through'; btn.classList.remove('did'); }, 2000);
+  }, () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; });
+}
+
+// Blocked: fine. The marker goes quiet and the ten days start over.
+function block(id){
+  const t = findTask(id);
+  if (!t) return;
+  t.paused = Date.now();
+  render(); save();
+}
+
+// Let go: off the board into the archive, marked so — kept on record,
+// never counted as done. Not for Kairos steps.
+function letGo(id){
+  for (const list of [state.active, state.backlog]){
+    const i = list.findIndex(t => t.id === id);
+    if (i < 0 || list[i].kairos) continue;
+    const [t] = list.splice(i, 1);
+    delete t.since;
+    t.done = Date.now();
+    t.letGo = true;
+    state.archive.unshift(t);
+    render(); save();
+    $('status').textContent = `Let go: ${t.text}`;
+    return;
+  }
+}
+
 function add(){
   const field = $('field');
   const text = field.value.trim();
   if (!text) return;
-  state.backlog.push({ id: newId(), text });
+  state.backlog.push({ id: newId(), text, added: Date.now() });
   field.value = '';
   field.focus();
   render(); save();
@@ -569,7 +657,7 @@ function pasteTasks(e){
   for (const line of listLines(text)){
     if (have.has(line.toLowerCase())) continue;
     have.add(line.toLowerCase());
-    state.backlog.push({ id: newId(), text: line });
+    state.backlog.push({ id: newId(), text: line, added: Date.now() });
     n++;
   }
   render(); save();
@@ -596,7 +684,7 @@ function findTask(id){
 
 // Copy a task to paste elsewhere (into Claude, to plan or resolve it): the
 // text, and for a task on Now a second line saying how long it has sat
-// there. Clipboard API first, a textarea fallback for WebViews without it.
+// there.
 function taskText(t){
   return state.active.includes(t) ? `${t.text}\nOn the Whiteboard's Now list for ${age(t)}.` : t.text;
 }
@@ -608,11 +696,7 @@ function copyTask(id, btn){
     btn.textContent = 'copied'; btn.classList.add('did');
     setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('did'); }, 1200);
   };
-  const fail = () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; };
-  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(did, fail); return; }
-  const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
-  let ok = false; try { ok = document.execCommand && document.execCommand('copy'); } catch (e) {}
-  ta.remove(); (ok ? did : fail)();
+  clip(text, did, () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; });
 }
 
 // Tap a task's text to edit it in place. Enter or tapping away saves; Escape
@@ -696,6 +780,12 @@ document.addEventListener('click', e => {
   }
   const done = e.target.closest('[data-done]');
   if (done && !done.disabled){ complete(done.dataset.done); return; }
+  const talkBtn = e.target.closest('[data-talk]');
+  if (talkBtn){ talk(talkBtn.dataset.talk, talkBtn); return; }
+  const blocked = e.target.closest('[data-blocked]');
+  if (blocked){ block(blocked.dataset.blocked); return; }
+  const go = e.target.closest('[data-letgo]');
+  if (go){ letGo(go.dataset.letgo); return; }
   const copy = e.target.closest('[data-copy]');
   if (copy){ copyTask(copy.dataset.copy, copy); return; }
   if (e.target.id === 'export'){ exportOpen = true; render(); return; }
