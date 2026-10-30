@@ -10,7 +10,9 @@ The Floor (`kairos-floor`).
 
 ## The rules
 
-1. A task enters only through the Add field, into the **Backlog**.
+1. A task enters only through the Add field, into the **Backlog**, at the
+   top (N., 2026-10-30; a pasted list or new Kairos steps land on top in
+   their own order).
 2. It moves Backlog → **Now** via the "Now" button, only while Now holds
    fewer than 7 tasks. The cap is hard-coded. Nothing stays on Now longer
    than five days (N., 2026-10-30): a task can show "5 days" at most; at the
@@ -69,7 +71,7 @@ The Floor (`kairos-floor`).
    ordinary tasks, marked "Kairos · story" (`whiteboard-v10`). The sync runs
    each time the app opens or comes back to the front: first the ticks
    waiting to be sent, then a read. A step not yet on the board is added at
-   the end of the Backlog (never twice: not when it is on Now, edited, or
+   the top of the Backlog (never twice: not when it is on Now, edited, or
    archived); a step ticked in the issue goes to the Archive; a step gone
    from the issue (Claude applied the tick, or reworded it) leaves Now and
    the Backlog. Ticking a Kairos task on Now ticks its box in the issue;
