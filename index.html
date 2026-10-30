@@ -180,7 +180,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v13</span>
+<span class="ver">whiteboard-v14</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -429,7 +429,7 @@ function kairosMerge({ tasks, ticked }){
   const open = new Map(tasks.map(t => [t.key, t]));
   const done = new Set(ticked), waiting = new Set(pendingTicks());
   const known = new Set([...state.active, ...state.backlog, ...state.archive].map(t => t.kairos).filter(Boolean));
-  let added = 0, left = 0;
+  let left = 0;
   for (const list of [state.active, state.backlog]){
     for (let i = list.length - 1; i >= 0; i--){
       const t = list[i];
@@ -439,12 +439,11 @@ function kairosMerge({ tasks, ticked }){
       if (done.has(t.kairos)){ delete t.since; t.done = Date.now(); state.archive.unshift(t); }
     }
   }
-  for (const t of tasks){
-    if (known.has(t.key)) continue;
-    state.backlog.push({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic, added: Date.now() });
-    added++;
-  }
-  return { added, left };
+  // New steps go on top of the backlog, in the issue's order.
+  const fresh = tasks.filter(t => !known.has(t.key))
+    .map(t => ({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic, added: Date.now() }));
+  state.backlog.unshift(...fresh);
+  return { added: fresh.length, left };
 }
 
 const clock = ms => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -632,7 +631,7 @@ function add(){
   const field = $('field');
   const text = field.value.trim();
   if (!text) return;
-  state.backlog.push({ id: newId(), text, added: Date.now() });
+  state.backlog.unshift({ id: newId(), text, added: Date.now() });
   field.value = '';
   field.focus();
   render(); save();
@@ -653,13 +652,14 @@ function pasteTasks(e){
   if (!/\n/.test(text.trim())) return;
   e.preventDefault();
   const have = new Set([...state.active, ...state.backlog].map(t => t.text.toLowerCase()));
-  let n = 0;
+  const fresh = [];
   for (const line of listLines(text)){
     if (have.has(line.toLowerCase())) continue;
     have.add(line.toLowerCase());
-    state.backlog.push({ id: newId(), text: line, added: Date.now() });
-    n++;
+    fresh.push({ id: newId(), text: line, added: Date.now() });
   }
+  state.backlog.unshift(...fresh);   // on top, in the list's order
+  const n = fresh.length;
   render(); save();
   $('status').textContent = `${n} task${n === 1 ? '' : 's'} added from the list.`;
 }

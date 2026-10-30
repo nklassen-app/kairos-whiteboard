@@ -219,12 +219,20 @@ function pasteTasks(h, text) {
   return e;
 }
 
+test('a typed task goes on top of the backlog', () => {
+  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
+  h.$('#field').value = 'Oil the hinges';
+  h.click('#add');
+  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Oil the hinges', 'Sort the toolbox']);
+  assert.match(h.$('#backlog .task').textContent, /Oil the hinges/, 'and shows first');
+});
+
 test('a list pasted into the task field adds one backlog task per line; a one-line paste is an ordinary paste', () => {
   const h = boot({ seed: { active: [{ id: 'a', text: 'Prune the roses', since: NOW }], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
   const e = pasteTasks(h, 'Tasks:\n- Read the garden plan and pick a bed — 10 min\n\n2. sort the toolbox\nPrune the roses\n  Oil the hinges  ');
   assert.ok(e.defaultPrevented, 'the list never lands in the field as one line');
   // The heading and the empty line are skipped, bullets stripped; a task already on Now or the backlog (any case) is not added twice.
-  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Sort the toolbox', 'Read the garden plan and pick a bed — 10 min', 'Oil the hinges']);
+  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Read the garden plan and pick a bed — 10 min', 'Oil the hinges', 'Sort the toolbox'], 'on top, in the list\'s order');
   assert.equal(h.stored().active.length, 1);
   assert.equal(h.$('#status').textContent, '2 tasks added from the list.');
   const one = pasteTasks(h, 'Water the ferns');
@@ -427,8 +435,8 @@ test('connected: the one issue is read with the token, and N.\'s open steps land
   assert.equal(opts.body, undefined, 'a read sends nothing');
   assert.equal(opts.headers.Authorization, 'Bearer github_pat_madeup123');
   const b = h.stored().backlog;
-  assert.deepEqual(texts(b), ['Mow the lawn', ROSES, SHED], 'after what was there');
-  assert.deepEqual(b.slice(1).map(t => [t.kairos, t.from]), [['aaaaaaaaaa', 'Garden plan 3'], ['cccccccccc', 'Toolshed']]);
+  assert.deepEqual(texts(b), [ROSES, SHED, 'Mow the lawn'], 'on top, in the issue\'s order');
+  assert.deepEqual(b.slice(0, 2).map(t => [t.kairos, t.from]), [['aaaaaaaaaa', 'Garden plan 3'], ['cccccccccc', 'Toolshed']]);
   assert.deepEqual(h.$$('#backlog .from').map(n => n.textContent), ['Kairos · Garden plan 3', 'Kairos · Toolshed']);
   assert.match(h.$('#kairos-note').textContent, /^Synced 1\d:00\. 2 new tasks on the backlog\.$/);
   assert.equal(h.$$('#backlog [data-push]').length, 3, 'each can go to Now like any task');
@@ -466,7 +474,7 @@ test('ticking a Kairos task on Now ticks exactly its box in the issue, and nothi
   for (const word of ['Roses, my words', 'Private errand', 'Old private task', 'Private program']) assert.ok(!JSON.stringify(h.calls).includes(word), word);
   assert.deepEqual(h.w.localStorage.getItem(TICKS_KEY), '[]', 'nothing left to send');
   assert.deepEqual(texts(h.stored().archive), ['Roses, my words', 'Old private task'], 'the task is archived as usual');
-  assert.deepEqual(texts(h.stored().backlog), ['Private errand', SHED], 'and the read after the write does not bring it back');
+  assert.deepEqual(texts(h.stored().backlog), [SHED, 'Private errand'], 'and the read after the write does not bring it back');
   assert.ok(!JSON.stringify(h.stored()).includes('github_pat_'), 'the token is not in the board document');
   h.click('#export');
   assert.ok(!h.$('#export-doc').textContent.includes('github_pat_'), 'nor in the export');
@@ -499,7 +507,7 @@ test('a step ticked in the issue goes to the archive; a step gone from it leaves
   await settle(h);
   assert.deepEqual(texts(h.stored().active), []);
   assert.deepEqual(texts(h.stored().archive), ['Mulch']);
-  assert.deepEqual(texts(h.stored().backlog), ['Mine', ROSES, SHED]);
+  assert.deepEqual(texts(h.stored().backlog), [ROSES, SHED, 'Mine']);
   assert.match(h.$('#kairos-note').textContent, /2 new tasks on the backlog; 2 tasks done or changed in Kairos, taken off\./);
   const wrong = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer('Not Found') });
   await settle(wrong);
