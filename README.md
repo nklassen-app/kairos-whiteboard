@@ -11,15 +11,20 @@ The Floor (`kairos-floor`).
 ## The rules
 
 1. A task enters only through the Add field, into the **Backlog**.
-2. Its only move is Backlog → **Now**, via the "Now" button, and only while Now
-   holds fewer than 7 tasks. The cap is hard-coded.
+2. It moves Backlog → **Now** via the "Now" button, only while Now holds
+   fewer than 7 tasks. The cap is hard-coded. Nothing stays on Now longer
+   than five days (N., 2026-10-30): a task can show "5 days" at most; at the
+   midnight that would make it six, it goes back to the top of the Backlog
+   by itself, its Now count cleared, and the note under the Backlog says
+   so. Checked each time the app opens or comes back to the front.
 3. Its only exit is the tick on the Now board, which moves it to the
    **Archive**, stamped with the day it was ticked. No undo. The Archive
    (collapsed at the bottom) lists finished tasks newest first, with the day
    and the program; nothing there can be edited or brought back.
 4. Text can be edited in place anywhere (tap it). Saving empty text keeps the
    original, so editing can never delete.
-5. No delete, no demote, no reorder, no priority.
+5. No delete, no reorder, no priority, and no demote by hand: the only way
+   back from Now is the five-day rule (2).
 6. State is one JSON document in `localStorage` under `whiteboard:v1`, on one
    device: `{ active: [{id, text, since, program?}], backlog: [{id, text,
    program?}], archive: [{id, text, done, program?}], programs: [{id, name}]

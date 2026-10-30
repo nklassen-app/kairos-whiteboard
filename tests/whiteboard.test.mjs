@@ -88,6 +88,31 @@ test('the day turns over at midnight, not 24 rolling hours after the push', () =
   assert.equal(h.$('#active .age').textContent, '1 day');
 });
 
+test('nothing stays on Now past five days: at the sixth it goes back to the top of the backlog, unstamped, and says so', () => {
+  const h = boot({ seed: { active: [
+    { id: 'a', text: 'Five days, stays', since: NOW - 5 * DAY },
+    { id: 'b', text: 'Six days, goes back', since: NOW - 6 * DAY, program: 'p' },
+    { id: 'c', text: 'Today, stays', since: NOW },
+  ], backlog: [{ id: 'x', text: 'Already waiting' }], programs: [{ id: 'p', name: 'Garden' }] } });
+  const s = h.stored();
+  assert.deepEqual(s.active.map(t => t.id), ['a', 'c']);
+  assert.deepEqual(s.backlog.map(t => t.id), ['b', 'x']);
+  assert.equal(s.backlog[0].since, undefined, 'the Now stamp is cleared');
+  assert.equal(s.backlog[0].program, 'p', 'the task keeps its program');
+  assert.deepEqual(h.$$('#active .age').map(e => e.textContent), ['5 days', 'today']);
+  assert.match(h.$('#status').textContent, /1 task back from Now after 5 days/);
+  assert.ok(!h.$('[data-push="b"]').disabled, 'it can be pushed up again');
+});
+
+test('the send-back also runs when the app comes back to the front', () => {
+  const h = boot({ seed: { active: [{ id: 'a', text: 'Left open overnight', since: NOW - 5 * DAY }], backlog: [] } });
+  assert.equal(h.stored().active.length, 1);
+  h.w.eval("state.active[0].since -= 86400000");   // a midnight passes while the app is in the background
+  h.w.document.dispatchEvent(new h.w.Event('visibilitychange'));
+  assert.deepEqual(h.stored().active, []);
+  assert.deepEqual(h.stored().backlog.map(t => t.id), ['a']);
+});
+
 test('tasks on Now from before there was a stamp are stamped at load and saved', () => {
   const h = boot({ seed: { active: [{ id: 'old', text: 'Old one' }], backlog: [{ id: 'b', text: 'Waiting' }] } });
   assert.equal(h.stored().active[0].since, NOW);

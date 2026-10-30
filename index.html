@@ -178,7 +178,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v11</span>
+<span class="ver">whiteboard-v12</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -214,6 +214,27 @@ const daysOn = t => {
 };
 const age = t => { const d = daysOn(t); return d == null ? '' : d <= 0 ? 'today' : d === 1 ? '1 day' : d + ' days'; };
 
+// Nothing stays on Now longer than five days (N., 2026-10-30): a task can
+// show "5 days" at most; at the midnight that would make it six, it goes
+// back to the top of the backlog by itself, its Now stamp cleared. Run at
+// every open and every return to the app — the only moments the count moves
+// for N.
+const MAX_DAYS = 5;
+function sendBackStale(){
+  const stale = state.active.filter(t => daysOn(t) > MAX_DAYS);
+  if (!stale.length) return 0;
+  state.active = state.active.filter(t => !stale.includes(t));
+  for (const t of stale) delete t.since;
+  state.backlog.unshift(...stale);
+  return stale.length;
+}
+function sweepNow(){
+  const n = sendBackStale();
+  if (!n) return;
+  render(); save();
+  $('status').textContent = `${n === 1 ? '1 task' : n + ' tasks'} back from Now after ${MAX_DAYS} days.`;
+}
+
 async function load(){
   try {
     const raw = localStorage.getItem(KEY);
@@ -231,8 +252,10 @@ async function load(){
   }
   let stamped = false;
   for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
+  const back = sendBackStale();
   render();
-  if (stamped || seeded) save();
+  if (stamped || seeded || back) save();
+  if (back) $('status').textContent = `${back === 1 ? '1 task' : back + ' tasks'} back from Now after ${MAX_DAYS} days.`;
 }
 
 async function save(){
@@ -686,7 +709,7 @@ load();
 kairosRefresh();
 $('kairos-save').addEventListener('click', kairosConnect);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') kairosRefresh();
+  if (document.visibilityState === 'visible'){ sweepNow(); kairosRefresh(); }
 });
 // updateViaCache:'none' keeps the HTTP cache out of sw.js checks, and every
 // return to the foreground forces one — belt and braces for WebViews that
