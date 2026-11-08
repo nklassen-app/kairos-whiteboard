@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v14';  // new tasks go on top of the backlog   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v15';  // a program at capture; Kairos tasks under Kairos OS   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {

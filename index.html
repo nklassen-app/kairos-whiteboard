@@ -94,6 +94,7 @@
   .prog{align-self:flex-start;max-width:100%;font:inherit;font-size:12px;color:var(--graphite);background:#fff;
     border:1.5px solid var(--edge);border-radius:6px;padding:2px 4px;}
   .prog.set{color:var(--blue);border-color:#b8c8e6;}
+  #field-prog-slot .prog{display:block;margin:-4px 0 12px;}
   details{margin-bottom:22px;}
   summary{font-size:13px;font-weight:650;color:var(--graphite);cursor:pointer;padding:4px 0;}
   .archive .row,.programs .row{padding:9px 2px;}
@@ -151,6 +152,7 @@
       <input id="field" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
       <button class="add" id="add" type="button">Add</button>
     </div>
+    <div id="field-prog-slot"></div>
     <div id="backlog"></div>
     <p class="note" id="status"></p>
   </section>
@@ -180,7 +182,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v14</span>
+<span class="ver">whiteboard-v15</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -266,8 +268,9 @@ async function load(){
   for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
   for (const t of state.active.concat(state.backlog)) if (!t.added){ t.added = Date.now(); stamped = true; }
   const back = sendBackStale();
+  const tagged = tagKairos();
   render();
-  if (stamped || seeded || back) save();
+  if (stamped || seeded || back || tagged) save();
   if (back) $('status').textContent = `${back === 1 ? '1 task' : back + ' tasks'} back from Now after ${MAX_DAYS} days.`;
 }
 
@@ -281,6 +284,19 @@ async function save(){
 }
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+// Every task from GitHub (the Kairos dashboard) is under Kairos OS
+// (Whiteboard flow 6, N., 2026-11-08): matched by name, any case, as the
+// program list is (rule 9), and added to the list the first time it is
+// needed. Only where the task has no program: one N. picked stays.
+const KAIROS_PROGRAM = 'Kairos OS';
+function tagKairos(){
+  const untagged = [...state.active, ...state.backlog, ...state.archive].filter(t => t.kairos && !t.program);
+  if (!untagged.length) return 0;
+  let p = state.programs.find(x => x.name.toLowerCase() === KAIROS_PROGRAM.toLowerCase());
+  if (!p){ p = { id: newId(), name: KAIROS_PROGRAM }; state.programs.push(p); }
+  for (const t of untagged) t.program = p.id;
+  return untagged.length;
+}
 const programName = id => (state.programs.find(p => p.id === id) || {}).name || '';
 // The day a task was ticked: "3 Oct", with the year once it is not this year's.
 const doneDay = ms => {
@@ -328,6 +344,14 @@ function render(){
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
   }
+
+  // The picker under "Add a task" (Whiteboard flow 6): a new task takes its
+  // program as it is typed. Its choice survives a re-render; add() clears it.
+  const slot = $('field-prog-slot'), was = $('field-prog') ? $('field-prog').value : '';
+  slot.innerHTML = state.programs.length
+    ? `<select class="prog" id="field-prog" aria-label="Program for the new task"><option value="">no program</option>${state.programs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>`
+    : '';
+  if ($('field-prog') && state.programs.some(p => p.id === was)) $('field-prog').value = was;
 
   const b = $('backlog');
   b.innerHTML = state.backlog.length
@@ -443,6 +467,7 @@ function kairosMerge({ tasks, ticked }){
   const fresh = tasks.filter(t => !known.has(t.key))
     .map(t => ({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic, added: Date.now() }));
   state.backlog.unshift(...fresh);
+  tagKairos();
   return { added: fresh.length, left };
 }
 
@@ -631,8 +656,12 @@ function add(){
   const field = $('field');
   const text = field.value.trim();
   if (!text) return;
-  state.backlog.unshift({ id: newId(), text, added: Date.now() });
+  const t = { id: newId(), text, added: Date.now() };
+  const prog = $('field-prog');
+  if (prog && prog.value) t.program = prog.value;
+  state.backlog.unshift(t);
   field.value = '';
+  if (prog) prog.value = '';
   field.focus();
   render(); save();
 }
