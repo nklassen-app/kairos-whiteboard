@@ -49,7 +49,10 @@ The Floor (`kairos-floor`).
    list already on the device is never overwritten. Add one, or paste several at once, one per line (bullets are
    stripped, a heading line ending in `:` and repeats are skipped). Tap a
    name to rename it; there is no removing one. Every task on Now and the
-   Backlog has a picker under its text while the list has a program.
+   Backlog has a picker under its text while the list has a program, and
+   so has "Add a task": a new task takes its program as it is typed; the
+   picker goes back to "no program" after each task (Whiteboard flow 6,
+   2026-11-08, `whiteboard-v15`).
 10. **Export for agent** (Agent design 5), at the bottom, shows *This is
    what leaves the phone* — one JSON document — and **Copy**. It is the
    one door for what an agent gets: `agentExport()` sends the text and program name of the
@@ -83,7 +86,12 @@ The Floor (`kairos-floor`).
    (`whiteboard:kairos-token`), never in the board's document, the export or
    a copy. A Content-Security-Policy in the page allows no other host; the
    service worker leaves other addresses alone. Nothing of the board is
-   sent. Kairos tasks carry no program, so the export holds them back. The
+   sent. Kairos tasks land under the program **Kairos OS** (matched by
+   name, any case; added to the list the first time it is missing), and
+   Kairos tasks already on the board or in the Archive with no program get
+   it at the next open; a program picked by hand is kept (Whiteboard flow
+   6, 2026-11-08). Kairos OS is not in `SHARED`, so the export still holds
+   them back. The
    note under "Kairos" says when it last synced and what changed, when it is
    not connected, when GitHub refuses the token or a write, when it is
    offline (with ticks still to send), and from 30 days before the token's

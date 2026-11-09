@@ -637,3 +637,62 @@ test('the export carries no board stamps: not added, not paused', () => {
   const doc = h.$('#export-doc').textContent;
   for (const s of ['added', 'paused', 'letGo']) assert.ok(!doc.includes(s), s);
 });
+
+/* ---- Whiteboard flow 6: a program picked at capture; Kairos tasks under Kairos OS ---- */
+
+test('a new task can take its program as it is typed; the picker goes back to no program after', () => {
+  const none = boot({ seed: { active: [], backlog: [], programs: [] } });
+  assert.equal(none.$('#field-prog'), null, 'no picker beside the field before there are programs');
+  const h = boot({ seed: { active: [], backlog: [], programs: [{ id: 'p1', name: 'Garden Revival' }, { id: 'p2', name: 'Kitchen Lab' }] } });
+  const sel = h.$('#field-prog');
+  assert.deepEqual([...sel.options].map(o => o.textContent), ['no program', 'Garden Revival', 'Kitchen Lab']);
+  sel.value = 'p2';
+  h.type('Sharpen the knives');
+  assert.equal(h.stored().backlog[0].program, 'p2');
+  assert.equal(h.$('[data-prog]').value, 'p2', 'the row shows it at once');
+  assert.equal(h.$('#field-prog').value, '', 'the next task starts with no program');
+  h.$('#field').value = 'Oil the hinges';
+  h.click('#add');
+  assert.equal(h.stored().backlog[0].program, undefined);
+});
+
+test('a program added later shows in the picker beside the field', () => {
+  const h = boot({ seed: { active: [], backlog: [], programs: [] } });
+  addPrograms(h, 'Harbor Walks');
+  assert.deepEqual([...h.$('#field-prog').options].map(o => o.textContent), ['no program', 'Harbor Walks']);
+});
+
+test('a Kairos step lands under Kairos OS, made once if the list lacks it; the export still holds it back', async () => {
+  const h = boot({ seed: { active: [], backlog: [], archive: [], programs: [{ id: 'p1', name: 'kairos os' }] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
+  await settle(h);
+  const s = h.stored();
+  assert.deepEqual(s.backlog.map(t => t.program), ['p1', 'p1'], 'matched by name, any case');
+  assert.equal(s.programs.length, 1);
+  const bare = boot({ seed: { active: [], backlog: [], archive: [], programs: [] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
+  await settle(bare);
+  const p = bare.stored().programs;
+  assert.deepEqual(p.map(x => x.name), ['Kairos OS'], 'made when missing');
+  assert.deepEqual(bare.stored().backlog.map(t => t.program), [p[0].id, p[0].id]);
+  bare.click('#export');
+  const doc = JSON.parse(bare.$('#export-doc').textContent);
+  assert.equal(doc.next.length, 0, 'Kairos OS is not a shared program');
+  assert.equal(doc.held_back, 2);
+});
+
+test('Kairos tasks already on the board or in the archive with no program get Kairos OS at load; a program N. set is kept', () => {
+  const h = boot({ seed: {
+    active: [{ id: 'a', text: 'A', kairos: 'aaaaaaaaaa', since: NOW }],
+    backlog: [{ id: 'b', text: 'B', kairos: 'bbbbbbbbbb', program: 'p2' }, { id: 'c', text: 'C' }],
+    archive: [{ id: 'd', text: 'D', kairos: 'dddddddddd', done: NOW }, { id: 'e', text: 'E', done: NOW }],
+    programs: [{ id: 'p1', name: 'Kairos OS' }, { id: 'p2', name: 'Kitchen Lab' }],
+  } });
+  const s = h.stored();
+  assert.equal(s.active[0].program, 'p1');
+  assert.equal(s.backlog[0].program, 'p2', 'kept');
+  assert.equal(s.backlog[1].program, undefined, 'not a Kairos task');
+  assert.equal(s.archive[0].program, 'p1', 'the archive too');
+  assert.equal(s.archive[1].program, undefined);
+  assert.match(h.$('#archive .meta').textContent, /Kairos OS/);
+  const plain = boot({ seed: { active: [], backlog: [{ id: 'c', text: 'C' }], archive: [], programs: [] } });
+  assert.deepEqual(plain.stored().programs, [], 'no Kairos task, no Kairos OS made');
+});
