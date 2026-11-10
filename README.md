@@ -14,25 +14,30 @@ The Floor (`kairos-floor`).
    top (N., 2026-10-30; a pasted list or new Kairos steps land on top in
    their own order).
 2. It moves Backlog → **Now** via the "Now" button, only while Now holds
-   fewer than 7 tasks. The cap is hard-coded. Nothing stays on Now longer
+   fewer than 7 tasks. The cap is hard-coded; a group (14) is one task,
+   whatever its steps. Nothing stays on Now longer
    than five days (N., 2026-10-30): a task can show "5 days" at most; at the
    midnight that would make it six, it goes back to the top of the Backlog
    by itself, its Now count cleared, and the note under the Backlog says
-   so. Checked each time the app opens or comes back to the front.
+   so; a group goes back steps and all. A ticked step (14) starts the five
+   days over. Checked each time the app opens or comes back to the front.
 3. It leaves the board by the tick on the Now board, which moves it to the
    **Archive**, stamped with the day it was ticked, or by **let go** on a
-   stuck task (13), archived marked *let go*. No undo. The Archive
+   stuck task (13), archived marked *let go*, or by ticking a group's last
+   open step (14); a group is archived with its steps. No undo. The Archive
    (collapsed at the bottom) lists finished tasks newest first, with the day
    and the program; nothing there can be edited or brought back.
 4. Text can be edited in place anywhere (tap it). Saving empty text keeps the
    original, so editing can never delete.
 5. No delete (let go archives, 13), no reorder, no priority, and no demote
-   by hand: the only way back from Now is the five-day rule (2).
+   by hand: the only way back from Now is the five-day rule (2). The same
+   holds for a group's steps (14).
 6. State is one JSON document in `localStorage` under `whiteboard:v1`, on one
    device: `{ active: [{id, text, since, added, paused?, program?}], backlog: [{id,
    text, added, paused?, program?}], archive: [{id, text, done, letGo?,
    program?}], programs: [{id, name}] }` (`since`/`added`/`paused`/`done`
-   epoch ms; Kairos tasks add `kairos` and `from`). No backup, no sync.
+   epoch ms; Kairos tasks add `kairos` and `from`; a group adds `steps:
+   [{id, text, done?}]` on Now, the Backlog and the Archive alike). No backup, no sync.
 7. A task on Now shows, at the right of its row, how long it has been there
    (today · 1 day · N days), counted in calendar days from the day it was
    pushed up — it turns over at midnight, not 24 hours after the exact
@@ -56,11 +61,13 @@ The Floor (`kairos-floor`).
 10. **Export for agent** (Agent design 5), at the bottom, shows *This is
    what leaves the phone* — one JSON document — and **Copy**. It is the
    one door for what an agent gets: `agentExport()` sends the text and program name of the
-   tasks on Now (with days there) and on the Backlog, the count ticked off
+   tasks on Now (with days there) and on the Backlog, a group's steps
+   (text, and whether ticked) with it, the count ticked off
    this week, and how many were held back. Only tasks under a program in
    `SHARED` cross, by id so a rename keeps the class; everything else is
    held back and only counted — the health, family and school defaults,
-   any program added later, and tasks with no program (N., 2026-10-20).
+   any program added later, and tasks with no program (N., 2026-10-20); a
+   held-back group's steps are held back with it, and it counts as one.
    The archive's text, ids and timestamps never go. No network call; N.
    pastes it by hand. The tests pin the allow-list.
 11. **A pasted list** (Pace 5, 2026-10-23): pasting several lines into "Add
@@ -106,11 +113,26 @@ The Floor (`kairos-floor`).
    let go), ending in plain lines that paste back as tasks (11). Only for
    tasks the export would share (10) and Kairos steps; any other stuck task
    gets the marker but no button, and no copy of its text is made. The
-   prompt carries the task's text, its program's name or Kairos story, and
-   its days; nothing else of the board, and no network call. **blocked**
+   prompt carries the task's text, its program's name or Kairos story, its
+   steps if it is a group (14), and its days, counted from the group's
+   `added` (a ticked step doesn't restart the ten); nothing else of the board, and no network call. **blocked**
    quiets the marker and starts the ten days over (`paused`). **let go**
    moves it to the Archive marked *let go*, not counted as done in the
    export; not offered on a Kairos step, which is let go in the backlog.
+14. **A group** (Whiteboard flow 3, N., 2026-11-08, `whiteboard-v16`): a
+   big task keeps its steps. **steps** under a task on Now or the Backlog
+   takes one step per line (cleaned like a pasted list, 11); the task
+   becomes a group, its steps under its text, and **+ steps** adds more at
+   the end later. It stays one unit: one slot on Now (2). On Now each open
+   step has its own tick: a ticked step stays in the group, struck
+   through, and restarts the five days (2), so a group that keeps moving
+   stays on Now and a stalled one goes back, steps and all. Ticking the
+   last open step, or the group itself, archives the group as done, with
+   its steps. Steps are ticked on Now only, as tasks are; they edit in
+   place (4) and are never deleted or reordered (5); a step has no steps
+   of its own. Not on a Kairos task: it mirrors the dashboard. Copy (8)
+   carries the steps too. Lock codes, keys and the like never go into a
+   step's text: paper only.
 
 ## Run locally
 
