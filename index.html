@@ -116,6 +116,19 @@
   .stuck .copy.talk{color:var(--blue);border-color:var(--blue);}
   .from{display:block;font-size:12px;color:var(--graphite);opacity:.8;margin-top:2px;}
   .kairos input{min-width:0;}
+  /* A group (Whiteboard flow 3): a task's steps under its text */
+  .steps{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+  .step{display:flex;align-items:flex-start;gap:8px;font-size:14px;}
+  .step .box{width:19px;height:19px;border-width:1.5px;}
+  .step .box svg{inset:-3px;width:23px;height:23px;}
+  .step .mark{width:19px;height:19px;flex:none;}
+  .step .mark svg{width:19px;height:19px;stroke:var(--green);stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+  .step.ticked .task{color:var(--graphite);text-decoration:line-through;text-decoration-color:#b9bdb7;}
+  .steps-edit{display:flex;gap:8px;margin-top:4px;}
+  .steps-edit textarea{flex:1;min-width:0;font:inherit;font-size:15px;padding:8px 10px;background:#fff;resize:vertical;
+    border:1.5px solid var(--edge);border-radius:8px;color:var(--ink);}
+  .steps-edit textarea:focus{outline:none;border-color:var(--ink);}
+  .grow{align-self:flex-start;}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
@@ -182,7 +195,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v15</span>
+<span class="ver">whiteboard-v16</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -322,8 +335,29 @@ const stuckBar = t => !stuck(t) ? '' : `<span class="stuck">${onBoard(t)} days o
 // A task that came from the Kairos dashboard says where, under its text.
 const from = t => t.kairos ? `<span class="from">Kairos · ${esc(t.from || '')}</span>` : '';
 
+// A group (Whiteboard flow 3, N., 2026-11-08): a big task keeps its steps
+// under it, one level deep, as one unit — one slot on Now. Steps are added
+// one per line (cleaned like a pasted list), edited in place, never deleted
+// or reordered. On Now each open step has its own tick: a ticked step stays
+// in the group, struck through, and restarts the five days (`since`); the
+// last one archives the group as done, steps and all. Not on a Kairos task,
+// which mirrors the dashboard.
+let stepsOpen = null;   // the task whose steps editor is open
+const TICK = '<svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>';
+const hasSteps = t => Array.isArray(t.steps) && t.steps.length > 0;
+const stepsOf = (t, tickable) => !hasSteps(t) ? '' : `<div class="steps">${t.steps.map(s => `
+  <div class="step${s.done ? ' ticked' : ''}" data-step="${s.id}">${tickable && !s.done
+    ? `<button class="box" data-step-done="${s.id}" aria-label="Tick ${esc(s.text)}">${TICK}</button>`
+    : `<span class="mark">${s.done ? TICK : ''}</span>`}<span class="task" data-step-edit="${s.id}">${esc(s.text)}</span></div>`).join('')}</div>`;
+const stepsTool = t => t.kairos ? ''
+  : stepsOpen === t.id
+    ? `<div class="steps-edit"><textarea id="steps-field" rows="3" placeholder="One step per line" aria-label="Steps for ${esc(t.text)}"></textarea><button class="add" data-steps-save="${t.id}" type="button">Add</button></div>`
+    : `<button class="copy grow" data-steps="${t.id}">${hasSteps(t) ? '+ steps' : 'steps'}</button>`;
+const stepLines = t => hasSteps(t) ? '\nIts steps:\n' + t.steps.map(s => `- [${s.done ? 'x' : ' '}] ${s.text}`).join('\n') : '';
+
 function render(){
   const n = openCount();
+  const draft = $('steps-field') ? $('steps-field').value : '';
   const c = $('count');
   c.textContent = n + ' / 7';
   c.classList.toggle('full', n >= 7);
@@ -339,7 +373,7 @@ function render(){
         <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}${stuckBar(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, true)}${picker(t)}${stepsTool(t)}${stuckBar(t)}</div>
         <span class="age" data-age="${t.id}">${age(t)}</span>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
@@ -357,7 +391,7 @@ function render(){
   b.innerHTML = state.backlog.length
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${picker(t)}${stuckBar(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, false)}${picker(t)}${stepsTool(t)}${stuckBar(t)}</div>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
@@ -367,7 +401,7 @@ function render(){
   $('archive').innerHTML = state.archive.length
     ? state.archive.map(t => `
       <div class="row" data-row="${t.id}">
-        <span class="task">${esc(t.text)}<span class="meta">${t.letGo ? 'let go · ' : ''}${doneDay(t.done)}${t.program && programName(t.program) ? ' · ' + esc(programName(t.program)) : ''}</span></span>
+        <span class="task">${esc(t.text)}<span class="meta">${t.letGo ? 'let go · ' : ''}${doneDay(t.done)}${t.program && programName(t.program) ? ' · ' + esc(programName(t.program)) : ''}${hasSteps(t) ? ' · ' + plural(t.steps.length, 'step') : ''}</span></span>
       </div>`).join('')
     : '<p class="note">Nothing ticked off yet.</p>';
 
@@ -376,6 +410,7 @@ function render(){
     ? state.programs.map(p => `
       <div class="row"><span class="task" data-prog-edit="${p.id}">${esc(p.name)}</span></div>`).join('')
     : '<p class="note">None yet. Add the programs you do Whiteboard tasks for.</p>';
+  if ($('steps-field')){ $('steps-field').value = draft; }
   renderExport();
 }
 
@@ -554,13 +589,15 @@ function agentExport(){
   const now = new Date();
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7).getTime();
   const shared = t => SHARED.has(t.program);
+  // A group's steps go with it, under its program's rule (Whiteboard flow 3).
+  const steps = t => hasSteps(t) ? { steps: t.steps.map(s => ({ text: s.text, ticked: !!s.done })) } : {};
   const all = state.active.concat(state.backlog);
   return {
     app: 'whiteboard',
     exported: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
     about: 'N.\'s own tasks. now: on the Now list (at most seven), with days there; next: the backlog. held_back: tasks under private programs, left out on purpose.',
-    now: state.active.filter(shared).map(t => ({ text: t.text, program: programName(t.program), days_on_now: daysOn(t) })),
-    next: state.backlog.filter(shared).map(t => ({ text: t.text, program: programName(t.program) })),
+    now: state.active.filter(shared).map(t => ({ text: t.text, program: programName(t.program), days_on_now: daysOn(t), ...steps(t) })),
+    next: state.backlog.filter(shared).map(t => ({ text: t.text, program: programName(t.program), ...steps(t) })),
     done_this_week: state.archive.filter(t => t.done >= monday && !t.letGo).length,
     held_back: all.filter(t => !shared(t)).length,
   };
@@ -594,7 +631,7 @@ function talkText(t){
   const where = state.active.includes(t) ? 'on my Now list' : 'in my backlog';
   const tag = t.kairos ? ` (Kairos · ${t.from || 'a step'})` : ` (program: ${programName(t.program)})`;
   return `This task has sat on my Whiteboard for ${onBoard(t)} days, now ${where}:
-"${t.text}"${tag}
+"${t.text}"${tag}${stepLines(t)}
 
 Help me find out why it isn't moving. Ask me one short question at a time.
 First find which it is: blocked by something outside me, too big, unclear,
@@ -710,12 +747,41 @@ function addPrograms(){
 function findTask(id){
   return state.active.find(t => t.id === id) || state.backlog.find(t => t.id === id);
 }
+// The group a step belongs to, and the step.
+function findStep(sid){
+  for (const t of state.active.concat(state.backlog)){
+    const s = hasSteps(t) && t.steps.find(x => x.id === sid);
+    if (s) return { t, s };
+  }
+  return null;
+}
+
+// Steps typed one per line join the end of the task's steps.
+function saveSteps(id){
+  const t = findTask(id);
+  const lines = listLines($('steps-field').value);
+  if (t && !t.kairos && lines.length) t.steps = (t.steps || []).concat(lines.map(text => ({ id: newId(), text })));
+  stepsOpen = null;
+  $('steps-field').value = '';
+  render(); save();
+}
+
+// A step ticked on Now: checked off inside the group, and the five days
+// start over; the last open one completes the group.
+function tickStep(sid){
+  const hit = findStep(sid);
+  if (!hit || hit.s.done || !state.active.includes(hit.t)) return;
+  hit.s.done = Date.now();
+  hit.t.since = Date.now();
+  render(); save();
+  if (hit.t.steps.every(s => s.done)) complete(hit.t.id);
+}
 
 // Copy a task to paste elsewhere (into Claude, to plan or resolve it): the
 // text, and for a task on Now a second line saying how long it has sat
 // there.
 function taskText(t){
-  return state.active.includes(t) ? `${t.text}\nOn the Whiteboard's Now list for ${age(t)}.` : t.text;
+  return (state.active.includes(t) ? `${t.text}\nOn the Whiteboard's Now list for ${age(t)}.` : t.text) + stepLines(t);
 }
 function copyTask(id, btn){
   const t = findTask(id);
@@ -735,6 +801,7 @@ function startEdit(span){
   // there is no removing a program, as there is no deleting a task).
   const t = span.dataset.progEdit
     ? { get text(){ return this.p.name; }, set text(v){ this.p.name = v; }, p: state.programs.find(p => p.id === span.dataset.progEdit) }
+    : span.dataset.stepEdit ? findStep(span.dataset.stepEdit).s
     : findTask(span.dataset.edit);
   const input = document.createElement('input');
   input.className = 'edit';
@@ -807,6 +874,12 @@ document.addEventListener('click', e => {
     render(); save();
     return;
   }
+  const stepDone = e.target.closest('[data-step-done]');
+  if (stepDone){ tickStep(stepDone.dataset.stepDone); return; }
+  const stepsBtn = e.target.closest('[data-steps]');
+  if (stepsBtn){ stepsOpen = stepsBtn.dataset.steps; render(); $('steps-field').focus(); return; }
+  const stepsSave = e.target.closest('[data-steps-save]');
+  if (stepsSave){ saveSteps(stepsSave.dataset.stepsSave); return; }
   const done = e.target.closest('[data-done]');
   if (done && !done.disabled){ complete(done.dataset.done); return; }
   const talkBtn = e.target.closest('[data-talk]');
@@ -820,7 +893,7 @@ document.addEventListener('click', e => {
   if (e.target.id === 'export'){ exportOpen = true; render(); return; }
   if (e.target.id === 'export-close'){ exportOpen = false; render(); return; }
   if (e.target.id === 'export-copy'){ copyExport(); return; }
-  const edit = e.target.closest('[data-edit],[data-prog-edit]');
+  const edit = e.target.closest('[data-edit],[data-prog-edit],[data-step-edit]');
   if (edit) startEdit(edit);
 });
 

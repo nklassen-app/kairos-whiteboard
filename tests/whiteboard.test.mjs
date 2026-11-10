@@ -696,3 +696,114 @@ test('Kairos tasks already on the board or in the archive with no program get Ka
   const plain = boot({ seed: { active: [], backlog: [{ id: 'c', text: 'C' }], archive: [], programs: [] } });
   assert.deepEqual(plain.stored().programs, [], 'no Kairos task, no Kairos OS made');
 });
+
+/* ---- Whiteboard flow 3: a big task keeps its steps ---- */
+
+function addSteps(h, id, text) {
+  h.click(`[data-steps="${id}"]`);
+  h.$('#steps-field').value = text;
+  h.click(`[data-steps-save="${id}"]`);
+}
+const GROUP = (extra = {}) => ({ id: 'g', text: 'Change the door code', since: NOW - 4 * DAY, added: NOW - 4 * DAY,
+  steps: [{ id: 's1', text: 'find the manual' }, { id: 's2', text: 'find the codes' }, { id: 's3', text: 'set the new code' }], ...extra });
+
+test('steps typed one per line make a task a group, its steps under it; more can be added later; never on a Kairos task', () => {
+  const h = boot({ seed: { active: [{ id: 'g', text: 'Change the door code', since: NOW }],
+    backlog: [{ id: 'b', text: 'Clear the gutters' }, { id: 'k', text: 'A Kairos step', kairos: 'cccccccccc', from: 'Garden plan 3' }] } });
+  assert.equal(h.$('[data-steps="k"]'), null, 'no steps on a Kairos task');
+  assert.ok(h.$('[data-steps="b"]'), 'a backlog task can take steps too');
+  addSteps(h, 'g', '- find the manual\nfind the codes\n\nSteps:\nunderstand the steps');
+  const g = h.stored().active[0];
+  assert.deepEqual(g.steps.map(s => s.text), ['find the manual', 'find the codes', 'understand the steps']);
+  assert.ok(g.steps.every(s => s.id && !s.done));
+  assert.deepEqual(h.$$('[data-row="g"] .step').map(e => e.textContent.trim()), ['find the manual', 'find the codes', 'understand the steps']);
+  assert.equal(h.$('#steps-field'), null, 'the editor closes');
+  addSteps(h, 'g', 'set the new code');
+  assert.deepEqual(h.stored().active[0].steps.map(s => s.text).slice(-2), ['understand the steps', 'set the new code'], 'added at the end');
+  assert.equal(h.$('.step [data-steps]'), null, 'a step has no steps of its own');
+});
+
+test('a group takes one slot on Now, whatever its steps', () => {
+  const others = [1, 2, 3, 4, 5].map(i => ({ id: 'a' + i, text: 'T' + i, since: NOW }));
+  const h = boot({ seed: { active: [GROUP(), ...others], backlog: [{ id: 'b', text: 'Seventh' }, { id: 'c', text: 'Eighth' }] } });
+  assert.equal(h.$('#count').textContent, '6 / 7');
+  h.click('[data-push="b"]');
+  assert.equal(h.$('#count').textContent, '7 / 7');
+  assert.equal(h.$('[data-push="c"]').disabled, true);
+});
+
+test('ticking a step checks it off inside the group and restarts the five days; the group stays', () => {
+  const h = boot({ seed: { active: [GROUP()], backlog: [] } });
+  assert.equal(h.$('#active .age').textContent, '4 days');
+  h.click('[data-step-done="s1"]');
+  const g = h.stored().active[0];
+  assert.equal(g.steps[0].done, NOW);
+  assert.equal(g.since, NOW, 'the five days start over');
+  assert.equal(h.$('#active .age').textContent, 'today');
+  assert.ok(h.$('[data-step="s1"]').classList.contains('ticked'));
+  assert.equal(h.$('[data-step-done="s1"]'), null, 'a ticked step stays ticked');
+  assert.equal(h.stored().archive.length, 0);
+});
+
+test('ticking the last open step archives the group as done, with its steps; so does ticking the group', async () => {
+  const h = boot({ seed: { active: [GROUP({ steps: [{ id: 's1', text: 'find the manual', done: NOW - DAY }, { id: 's2', text: 'set the new code' }] })], backlog: [] } });
+  h.click('[data-step-done="s2"]');
+  await new Promise(r => setTimeout(r, 600));
+  let s = h.stored();
+  assert.deepEqual(s.active, []);
+  assert.equal(s.archive[0].id, 'g');
+  assert.equal(s.archive[0].done, NOW);
+  assert.deepEqual(s.archive[0].steps.map(x => x.text), ['find the manual', 'set the new code']);
+  assert.match(h.$('#archive .meta').textContent, /2 steps/);
+  const k = boot({ seed: { active: [GROUP()], backlog: [] } });
+  k.click('[data-done="g"]');
+  await new Promise(r => setTimeout(r, 600));
+  s = k.stored();
+  assert.equal(s.archive[0].id, 'g');
+  assert.equal(s.archive[0].steps.length, 3, 'its open steps go with it');
+});
+
+test('a stalled group goes back to the backlog like any task, steps and all; on the backlog its steps show without ticks', () => {
+  const h = boot({ seed: { active: [GROUP({ since: NOW - 6 * DAY, steps: [{ id: 's1', text: 'find the manual', done: NOW - 6 * DAY }, { id: 's2', text: 'set the new code' }] })], backlog: [] } });
+  const s = h.stored();
+  assert.deepEqual(s.active, []);
+  assert.deepEqual(s.backlog[0].steps.map(x => x.text), ['find the manual', 'set the new code']);
+  assert.equal(s.backlog[0].steps[0].done, NOW - 6 * DAY);
+  assert.equal(h.$$('#backlog .step').length, 2);
+  assert.equal(h.$('#backlog [data-step-done]'), null, 'steps are ticked on Now, as tasks are');
+});
+
+test('a step edits in place; empty text keeps it; nothing deletes or reorders a step', () => {
+  const h = boot({ seed: { active: [GROUP()], backlog: [] } });
+  const edit = (sid, text) => {
+    h.click(`[data-step-edit="${sid}"]`);
+    const input = h.$('input.edit');
+    input.value = text;
+    input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  };
+  edit('s2', 'find the codes (the paper card)');
+  edit('s3', '   ');
+  assert.deepEqual(h.stored().active[0].steps.map(s => s.text), ['find the manual', 'find the codes (the paper card)', 'set the new code']);
+  assert.equal(h.$('.step button:not([data-step-done])'), null, 'no delete or move on a step');
+});
+
+test('the export carries a shared group\'s steps; a held-back group\'s steps stay out with it', () => {
+  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })),
+    active: [GROUP({ program: 'd4', steps: [{ id: 's1', text: 'find the manual', done: NOW }, { id: 's2', text: 'set the new code' }] })],
+    backlog: [{ id: 'p', text: 'PRIVATE group', program: 'd0', added: NOW, steps: [{ id: 's9', text: 'PRIVATE step' }] }],
+    archive: [{ id: 'z', text: 'old', done: NOW, steps: [{ id: 's8', text: 'ARCHIVED step', done: NOW }] }] } });
+  h.click('#export');
+  const text = h.$('#export-doc').textContent, doc = JSON.parse(text);
+  assert.deepEqual(doc.now[0].steps, [{ text: 'find the manual', ticked: true }, { text: 'set the new code', ticked: false }]);
+  assert.equal(doc.held_back, 1, 'a group counts as one');
+  for (const s of ['PRIVATE', 'ARCHIVED', 's1', 'added']) assert.ok(!text.includes(s), s);
+});
+
+test('Talk it through on a stuck group includes its steps; the ten days count from the group\'s added', async () => {
+  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })), backlog: [], active: [GROUP({ program: 'd4', added: NOW - 11 * DAY,
+    steps: [{ id: 's1', text: 'find the manual', done: NOW }, { id: 's2', text: 'set the new code' }] })] } });
+  assert.match(h.$('[data-row="g"] .stuck').textContent, /11 days on the board/, 'a ticked step does not reset the ten days');
+  h.click('[data-talk="g"]');
+  await h.tick();
+  assert.match(h.copied(), /"Change the door code" \(program: Creative Home\)\nIts steps:\n- \[x\] find the manual\n- \[ \] set the new code\n/);
+});
