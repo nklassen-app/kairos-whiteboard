@@ -716,7 +716,7 @@ test('steps typed one per line make a task a group, its steps under it; more can
   const g = h.stored().active[0];
   assert.deepEqual(g.steps.map(s => s.text), ['find the manual', 'find the codes', 'understand the steps']);
   assert.ok(g.steps.every(s => s.id && !s.done));
-  assert.deepEqual(h.$$('[data-row="g"] .step').map(e => e.textContent.trim()), ['find the manual', 'find the codes', 'understand the steps']);
+  assert.deepEqual(h.$$('[data-row="g"] .step .task').map(e => e.textContent.trim()), ['find the manual', 'find the codes', 'understand the steps']);
   assert.equal(h.$('#steps-field'), null, 'the editor closes');
   addSteps(h, 'g', 'set the new code');
   assert.deepEqual(h.stored().active[0].steps.map(s => s.text).slice(-2), ['understand the steps', 'set the new code'], 'added at the end');
@@ -806,4 +806,92 @@ test('Talk it through on a stuck group includes its steps; the ten days count fr
   h.click('[data-talk="g"]');
   await h.tick();
   assert.match(h.copied(), /"Change the door code" \(program: Creative Home\)\nIts steps:\n- \[x\] find the manual\n- \[ \] set the new code\n/);
+});
+
+/* ---- Whiteboard flow 4: what fits the time I have ---- */
+
+const pick = (h, sel, value) => { const s = h.$(sel); s.value = value; s.dispatchEvent(new h.w.Event('change', { bubbles: true })); };
+const faded = h => h.$$('#active [data-row].faded').map(e => e.dataset.row);
+const SIZED = () => ({ backlog: [{ id: 'b', text: 'Backlog, half a day', size: 'half' }], active: [
+  { id: 'm', text: 'Minutes', size: 'min', since: NOW },
+  { id: 'o', text: 'An hour', size: 'hour', since: NOW },
+  { id: 'h', text: 'Half a day', size: 'half', since: NOW },
+  { id: 'u', text: 'Unsized', since: NOW },
+] });
+
+test('a task on Now or the backlog takes a size under its text: minutes, an hour, half a day', () => {
+  const h = boot({ seed: { active: [{ id: 'a', text: 'Fix the gate latch', since: NOW }], backlog: [{ id: 'b', text: 'Clear the gutters' }] } });
+  assert.deepEqual([...h.$('[data-size="a"]').options].map(o => o.textContent), ['no size', 'minutes', 'an hour', 'half a day']);
+  assert.ok(h.$('[data-size="b"]'), 'the backlog too');
+  pick(h, '[data-size="a"]', 'hour');
+  assert.equal(h.stored().active[0].size, 'hour');
+  assert.ok(h.$('[data-size="a"]').classList.contains('set'));
+  pick(h, '[data-size="a"]', '');
+  assert.equal(h.stored().active[0].size, undefined, 'and back to no size');
+});
+
+test('the I have bar fades what on Now doesn\'t fit; unsized always shows; tap it again and all show', () => {
+  const h = boot({ seed: SIZED() });
+  assert.deepEqual(h.$$('#have [data-have]').map(b => b.textContent), ['15 min', '1 h', 'more']);
+  assert.deepEqual(faded(h), []);
+  h.click('[data-have="15"]');
+  assert.deepEqual(faded(h), ['o', 'h']);
+  assert.ok(h.$('[data-have="15"]').classList.contains('on'));
+  assert.equal(h.$('#backlog .faded'), null, 'Now only');
+  assert.equal(h.$('[data-done="h"]').disabled, false, 'a faded task is still there and tappable');
+  h.click('[data-have="60"]');
+  assert.deepEqual(faded(h), ['h']);
+  h.click('[data-have="more"]');
+  assert.deepEqual(faded(h), []);
+  h.click('[data-have="60"]');
+  h.click('[data-have="60"]');
+  assert.deepEqual(faded(h), [], 'tapped again: all show');
+  assert.equal(h.$('#have .on'), null);
+});
+
+test('the bar\'s choice is forgotten when the app closes; it is never saved', () => {
+  const h = boot({ seed: SIZED() });
+  h.click('[data-have="15"]');
+  pick(h, '[data-size="u"]', 'min');   // a save while the bar is set
+  const raw = h.w.localStorage.getItem(KEY);
+  assert.ok(!raw.includes('have'));
+  const again = boot({ seed: JSON.parse(raw) });
+  assert.deepEqual(faded(again), []);
+  assert.equal(again.$('#have .on'), null);
+});
+
+test('a group fits by its next open step\'s size, or its own when that step has none; a step takes a size too', () => {
+  const steps = [{ id: 's1', text: 'find the manual', size: 'half', done: NOW }, { id: 's2', text: 'find the codes', size: 'min' }, { id: 's3', text: 'set the new code' }];
+  const h = boot({ seed: { backlog: [], active: [
+    { id: 'g', text: 'Change the door code', size: 'half', since: NOW, steps },
+    { id: 'k', text: 'Paint the shed', size: 'half', since: NOW, steps: [{ id: 't1', text: 'buy paint' }] },
+  ] } });
+  h.click('[data-have="15"]');
+  assert.deepEqual(faded(h), ['k'], 'g by its next step (minutes); k by its own size');
+  assert.deepEqual([...h.$('[data-step-size="s3"]').options].map(o => o.textContent), ['no size', 'minutes', 'an hour', 'half a day']);
+  pick(h, '[data-step-size="t1"]', 'min');
+  assert.equal(h.stored().active[1].steps[0].size, 'min');
+  assert.deepEqual(faded(h), [], 'the bar holds through the change');
+  h.click('[data-step-done="s2"]');
+  assert.deepEqual(faded(h), ['g'], 'the next open step is unsized: the group\'s own size counts');
+});
+
+test('a task sized half a day offers steps', () => {
+  const h = boot({ seed: { backlog: [], active: [
+    { id: 'h', text: 'Half a day', size: 'half', since: NOW },
+    { id: 'o', text: 'An hour', size: 'hour', since: NOW },
+    { id: 'g', text: 'A group', size: 'half', since: NOW, steps: [{ id: 's1', text: 'one' }] },
+  ] } });
+  assert.ok(h.$('[data-steps="h"]').classList.contains('offer'));
+  assert.match(h.$('[data-steps="h"]').textContent, /break into steps/);
+  assert.ok(!h.$('[data-steps="o"]').classList.contains('offer'));
+  assert.ok(!h.$('[data-steps="g"]').classList.contains('offer'), 'already a group');
+});
+
+test('a size is not in the export', () => {
+  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })), backlog: [{ id: 'b', text: 'Shared', program: 'd4', size: 'hour' }],
+    active: [{ id: 'g', text: 'Group', program: 'd4', size: 'half', since: NOW, steps: [{ id: 's1', text: 'one', size: 'min' }] }] } });
+  h.click('#export');
+  const text = h.$('#export-doc').textContent;
+  for (const s of ['size', 'half', 'hour', '"min']) assert.ok(!text.includes(s), s);
 });
