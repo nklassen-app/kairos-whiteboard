@@ -129,6 +129,16 @@
     border:1.5px solid var(--edge);border-radius:8px;color:var(--ink);}
   .steps-edit textarea:focus{outline:none;border-color:var(--ink);}
   .grow{align-self:flex-start;}
+  /* What fits the time I have (Whiteboard flow 4) */
+  .have{display:flex;align-items:center;gap:6px;margin:0 0 10px;font-size:13px;color:var(--graphite);}
+  .have button{font:inherit;font-size:13px;font-weight:600;color:var(--graphite);background:#fff;border:1.5px solid var(--edge);border-radius:6px;padding:4px 10px;cursor:pointer;}
+  .have button.on{color:#fff;background:var(--ink);border-color:var(--ink);}
+  .row.faded{opacity:.35;}
+  .pickers{display:flex;flex-wrap:wrap;gap:6px;}
+  .step .size{margin-left:auto;flex:none;max-width:86px;font-size:11px;padding:1px 2px;}
+  .pickers .steps-edit{flex-basis:100%;}
+  .pickers .copy{padding:2px 8px;}
+  .copy.offer{color:var(--blue);border-color:var(--blue);}
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
@@ -143,6 +153,7 @@
 
   <section>
     <h2>Now</h2>
+    <div class="have" id="have">I have <button type="button" data-have="15">15 min</button><button type="button" data-have="60">1 h</button><button type="button" data-have="more">more</button></div>
     <div class="board" id="active"></div>
   </section>
 
@@ -195,7 +206,7 @@
   </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v16</span>
+<span class="ver">whiteboard-v17</span>
 
 <script>
 const KEY = 'whiteboard:v1';
@@ -345,14 +356,33 @@ const from = t => t.kairos ? `<span class="from">Kairos · ${esc(t.from || '')}<
 let stepsOpen = null;   // the task whose steps editor is open
 const TICK = '<svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>';
 const hasSteps = t => Array.isArray(t.steps) && t.steps.length > 0;
+// What fits the time I have (Whiteboard flow 4, N., 2026-11-08): a task or
+// a step can carry a size; the I have bar above Now fades every task on
+// Now that doesn't fit, still there and tappable. A group fits by its next
+// open step's size, or its own when that step has none; an unsized task
+// always fits. The bar's choice lives only in memory: it describes this
+// moment, not the task, so it is never saved. A size is never exported.
+const SIZES = [['min', 'minutes', 15], ['hour', 'an hour', 60], ['half', 'half a day', 240]];
+const HAVE = { '15': 15, '60': 60, more: Infinity };
+let have = null;
+const minutes = sz => (SIZES.find(x => x[0] === sz) || [])[2];
+const sizeOf = t => { const next = hasSteps(t) && t.steps.find(s => !s.done); return (next && next.size) || t.size; };
+const fits = t => !have || !sizeOf(t) || minutes(sizeOf(t)) <= HAVE[have];
+const sizeOpts = cur => '<option value="">no size</option>' + SIZES.map(([v, label]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${label}</option>`).join('');
+const sizePicker = t => `<select class="prog${t.size ? ' set' : ''}" data-size="${t.id}" aria-label="Size of ${esc(t.text)}">${sizeOpts(t.size)}</select>`;
+const pickers = t => `<div class="pickers">${picker(t)}${sizePicker(t)}${stepsTool(t)}</div>`;
+
 const stepsOf = (t, tickable) => !hasSteps(t) ? '' : `<div class="steps">${t.steps.map(s => `
   <div class="step${s.done ? ' ticked' : ''}" data-step="${s.id}">${tickable && !s.done
     ? `<button class="box" data-step-done="${s.id}" aria-label="Tick ${esc(s.text)}">${TICK}</button>`
-    : `<span class="mark">${s.done ? TICK : ''}</span>`}<span class="task" data-step-edit="${s.id}">${esc(s.text)}</span></div>`).join('')}</div>`;
+    : `<span class="mark">${s.done ? TICK : ''}</span>`}<span class="task" data-step-edit="${s.id}">${esc(s.text)}</span><select class="prog size${s.size ? ' set' : ''}" data-step-size="${s.id}" aria-label="Size of ${esc(s.text)}">${sizeOpts(s.size)}</select></div>`).join('')}</div>`;
 const stepsTool = t => t.kairos ? ''
   : stepsOpen === t.id
     ? `<div class="steps-edit"><textarea id="steps-field" rows="3" placeholder="One step per line" aria-label="Steps for ${esc(t.text)}"></textarea><button class="add" data-steps-save="${t.id}" type="button">Add</button></div>`
-    : `<button class="copy grow" data-steps="${t.id}">${hasSteps(t) ? '+ steps' : 'steps'}</button>`;
+    : hasSteps(t) ? `<button class="copy grow" data-steps="${t.id}">+ steps</button>`
+    // A task sized half a day offers steps (Whiteboard flow 4).
+    : t.size === 'half' ? `<button class="copy grow offer" data-steps="${t.id}">break into steps</button>`
+    : `<button class="copy grow" data-steps="${t.id}">steps</button>`;
 const stepLines = t => hasSteps(t) ? '\nIts steps:\n' + t.steps.map(s => `- [${s.done ? 'x' : ' '}] ${s.text}`).join('\n') : '';
 
 function render(){
@@ -362,6 +392,7 @@ function render(){
   c.textContent = n + ' / 7';
   c.classList.toggle('full', n >= 7);
 
+  for (const b of document.querySelectorAll('[data-have]')) b.classList.toggle('on', b.dataset.have === have);
   const a = $('active');
   if (!state.active.length){
     a.className = 'board empty';
@@ -369,11 +400,11 @@ function render(){
   } else {
     a.className = 'board';
     a.innerHTML = state.active.map(t => `
-      <div class="row" data-row="${t.id}">
+      <div class="row${fits(t) ? '' : ' faded'}" data-row="${t.id}">
         <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
           <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
         </button>
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, true)}${picker(t)}${stepsTool(t)}${stuckBar(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, true)}${pickers(t)}${stuckBar(t)}</div>
         <span class="age" data-age="${t.id}">${age(t)}</span>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
       </div>`).join('');
@@ -391,7 +422,7 @@ function render(){
   b.innerHTML = state.backlog.length
     ? state.backlog.map(t => `
       <div class="row" data-row="${t.id}">
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, false)}${picker(t)}${stepsTool(t)}${stuckBar(t)}</div>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, false)}${pickers(t)}${stuckBar(t)}</div>
         <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
         <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
       </div>`).join('')
@@ -856,6 +887,14 @@ $('prog-field').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); addPrograms(); }
 });
 document.addEventListener('change', e => {
+  const size = e.target.closest('[data-size],[data-step-size]');
+  if (size){
+    const t = size.dataset.size ? findTask(size.dataset.size) : (findStep(size.dataset.stepSize) || {}).s;
+    if (!t) return;
+    if (size.value) t.size = size.value; else delete t.size;
+    render(); save();
+    return;
+  }
   const sel = e.target.closest('[data-prog]');
   if (!sel) return;
   const t = findTask(sel.dataset.prog);
@@ -874,6 +913,8 @@ document.addEventListener('click', e => {
     render(); save();
     return;
   }
+  const haveBtn = e.target.closest('[data-have]');
+  if (haveBtn){ have = have === haveBtn.dataset.have ? null : haveBtn.dataset.have; render(); return; }
   const stepDone = e.target.closest('[data-step-done]');
   if (stepDone){ tickStep(stepDone.dataset.stepDone); return; }
   const stepsBtn = e.target.closest('[data-steps]');

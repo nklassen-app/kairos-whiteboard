@@ -37,7 +37,9 @@ The Floor (`kairos-floor`).
    text, added, paused?, program?}], archive: [{id, text, done, letGo?,
    program?}], programs: [{id, name}] }` (`since`/`added`/`paused`/`done`
    epoch ms; Kairos tasks add `kairos` and `from`; a group adds `steps:
-   [{id, text, done?}]` on Now, the Backlog and the Archive alike). No backup, no sync.
+   [{id, text, done?, size?}]` on Now, the Backlog and the Archive alike;
+   a task or step may carry `size`: `min`, `hour` or `half`, 15). The I
+   have bar's choice (15) is never stored. No backup, no sync.
 7. A task on Now shows, at the right of its row, how long it has been there
    (today · 1 day · N days), counted in calendar days from the day it was
    pushed up — it turns over at midnight, not 24 hours after the exact
@@ -133,6 +135,18 @@ The Floor (`kairos-floor`).
    of its own. Not on a Kairos task: it mirrors the dashboard. Copy (8)
    carries the steps too. Lock codes, keys and the like never go into a
    step's text: paper only.
+15. **What fits the time I have** (Whiteboard flow 4, N., 2026-11-08,
+   `whiteboard-v17`): a task on Now or the Backlog, and a step, can carry a
+   size, picked under its text beside the program: **minutes · an hour ·
+   half a day**. Above Now, an **I have** bar: 15 min · 1 h · more. Tap one
+   and every task on Now that doesn't fit fades, still there and still
+   tappable; tap it again and all show. 15 min fits minutes, 1 h fits up to
+   an hour, more fits everything. A group (14) fits by its next open
+   step's size, or its own when that step has none; an unsized task always
+   fits. A task sized half a day, not yet a group, offers **break into
+   steps**. The bar filters Now only, and its choice is forgotten when the
+   app closes: it describes this moment, not the task. A size is not in
+   the export (10), the copy (8) or Talk it through (13).
 
 ## Run locally
 

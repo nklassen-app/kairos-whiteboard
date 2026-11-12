@@ -1,4 +1,4 @@
-const CACHE = 'whiteboard-v16';  // a big task keeps its steps (Whiteboard flow 3)   // bump on EVERY content change, and the .ver marker in index.html with it
+const CACHE = 'whiteboard-v17';  // what fits the time I have (Whiteboard flow 4)   // bump on EVERY content change, and the .ver marker in index.html with it
 const ASSETS = ['.', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', e => {
