@@ -1,5 +1,6 @@
-// DOM-level tests for the Whiteboard. index.html is booted in jsdom under a
-// fixed clock; each test gets a fresh window and a fresh localStorage.
+// DOM-level tests for the Whiteboard, v18 (Ready + Icebox, N. 2026-11-15).
+// index.html is booted in jsdom under a fixed clock; each test gets a fresh
+// window and a fresh localStorage.
 //
 //   cd tests && npm install && npm test
 
@@ -14,11 +15,12 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HTML = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const SW = readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
 const KEY = 'whiteboard:v1';
-const NOW = new Date('2026-09-20T10:00:00.000Z').getTime();
+const BACKUP = 'whiteboard:v17-backup';
+const TOKEN = 'whiteboard:kairos-token';
+const NOW = new Date('2026-11-15T10:00:00.000Z').getTime();
 const DAY = 86400000;
 
-function boot({ seed = null, store = {}, fetch = null } = {}) {
-  let copied = null;
+function boot({ seed = null, store = {}, raw = {} } = {}) {
   const calls = [];
   const dom = new JSDOM(HTML, {
     url: 'http://localhost/', runScripts: 'dangerously', pretendToBeVisual: true,
@@ -29,869 +31,237 @@ function boot({ seed = null, store = {}, fetch = null } = {}) {
         static now() { return NOW; }
       }
       window.Date = Fixed;
-      Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: t => { copied = t; return Promise.resolve(); } }, configurable: true });
       if (seed) window.localStorage.setItem(KEY, JSON.stringify(seed));
       for (const [k, v] of Object.entries(store)) window.localStorage.setItem(k, JSON.stringify(v));
-      // No test ever reaches the network: every call is recorded, and
-      // answered by the test's own stub (or refused, as if offline).
-      window.fetch = (url, opts = {}) => { calls.push({ url, opts }); return fetch ? fetch(url, opts) : Promise.reject(new Error('offline')); };
+      for (const [k, v] of Object.entries(raw)) window.localStorage.setItem(k, v);
+      // No call may reach the network: every one is recorded and refused.
+      window.fetch = (url, opts = {}) => { calls.push({ url, opts }); return Promise.reject(new Error('offline')); };
     },
   });
   const w = dom.window, d = w.document;
   return {
-    w,
+    w, d, calls,
     $: s => d.querySelector(s),
     $$: s => [...d.querySelectorAll(s)],
     stored: () => JSON.parse(w.localStorage.getItem(KEY)),
-    copied: () => copied,
-    calls,
+    item: k => w.localStorage.getItem(k),
     type(text) { const f = d.getElementById('field'); f.value = text; f.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); },
     click: s => d.querySelector(s).click(),
-    tick: () => new Promise(r => setTimeout(r, 0)),
+    wait: ms => new Promise(r => setTimeout(r, ms)),
+    reload() { return boot({ raw: { [KEY]: w.localStorage.getItem(KEY), ...(w.localStorage.getItem(BACKUP) ? { [BACKUP]: w.localStorage.getItem(BACKUP) } : {}) } }); },
   };
 }
 
-test('a fresh board is empty and the version marker matches the worker cache name', () => {
-  const h = boot();
-  assert.match(h.$('#active').textContent, /Nothing here/);
-  assert.equal(h.$('#count').textContent, '0 / 7');
-  assert.equal(h.$('.ver').textContent, SW.match(/const CACHE = '([^']+)'/)[1]);
-});
-
-test('pushing a task to Now stamps when, and the row says "today"', () => {
-  const h = boot();
-  h.type('Call the dentist');
-  assert.equal(h.$('#backlog .age'), null, 'backlog rows carry no age');
-  h.click('[data-push]');
-  const t = h.stored().active[0];
-  assert.equal(t.since, NOW);
-  assert.equal(h.$('#active .age').textContent, 'today');
-});
-
-test('the age counts whole days since the push', () => {
-  const h = boot({ seed: { active: [
-    { id: 'a', text: 'A', since: NOW - 26 * 3600 * 1000 },
-    { id: 'b', text: 'B', since: NOW - 5 * DAY - 1000 },
-    { id: 'c', text: 'C', since: NOW - 3600 * 1000 },
-  ], backlog: [] } });
-  assert.deepEqual(h.$$('#active .age').map(e => e.textContent), ['1 day', '5 days', 'today']);
-});
-
-test('the day turns over at midnight, not 24 rolling hours after the push', () => {
-  // NOW is 2026-09-20T10:00:00Z. A task pushed up late the previous
-  // calendar day (2026-09-19T23:00:00Z) is only 11 hours old, but it was
-  // pushed up on a different date, so it already reads "1 day" — this is
-  // the case that a plain (Date.now() - since) / DAY got wrong.
-  const h = boot({ seed: { active: [
-    { id: 'a', text: 'A', since: NOW - 11 * 3600 * 1000 },
-  ], backlog: [] } });
-  assert.equal(h.$('#active .age').textContent, '1 day');
-});
-
-test('nothing stays on Now past five days: at the sixth it goes back to the top of the backlog, unstamped, and says so', () => {
-  const h = boot({ seed: { active: [
-    { id: 'a', text: 'Five days, stays', since: NOW - 5 * DAY },
-    { id: 'b', text: 'Six days, goes back', since: NOW - 6 * DAY, program: 'p' },
-    { id: 'c', text: 'Today, stays', since: NOW },
-  ], backlog: [{ id: 'x', text: 'Already waiting' }], programs: [{ id: 'p', name: 'Garden' }] } });
-  const s = h.stored();
-  assert.deepEqual(s.active.map(t => t.id), ['a', 'c']);
-  assert.deepEqual(s.backlog.map(t => t.id), ['b', 'x']);
-  assert.equal(s.backlog[0].since, undefined, 'the Now stamp is cleared');
-  assert.equal(s.backlog[0].program, 'p', 'the task keeps its program');
-  assert.deepEqual(h.$$('#active .age').map(e => e.textContent), ['5 days', 'today']);
-  assert.match(h.$('#status').textContent, /1 task back from Now after 5 days/);
-  assert.ok(!h.$('[data-push="b"]').disabled, 'it can be pushed up again');
-});
-
-test('the send-back also runs when the app comes back to the front', () => {
-  const h = boot({ seed: { active: [{ id: 'a', text: 'Left open overnight', since: NOW - 5 * DAY }], backlog: [] } });
-  assert.equal(h.stored().active.length, 1);
-  h.w.eval("state.active[0].since -= 86400000");   // a midnight passes while the app is in the background
-  h.w.document.dispatchEvent(new h.w.Event('visibilitychange'));
-  assert.deepEqual(h.stored().active, []);
-  assert.deepEqual(h.stored().backlog.map(t => t.id), ['a']);
-});
-
-test('tasks on Now from before there was a stamp are stamped at load and saved', () => {
-  const h = boot({ seed: { active: [{ id: 'old', text: 'Old one' }], backlog: [{ id: 'b', text: 'Waiting' }] } });
-  assert.equal(h.stored().active[0].since, NOW);
-  assert.equal(h.stored().backlog[0].since, undefined);
-  assert.equal(h.$('#active .age').textContent, 'today');
-});
-
-test('copy puts the text on the clipboard; a Now task adds how long it has sat there; the button says so briefly', async () => {
-  const h = boot({ seed: { active: [{ id: 'a', text: 'Fix the gate latch', since: NOW - 3 * DAY }], backlog: [{ id: 'b', text: 'Buy stamps' }] } });
-  h.click('#backlog [data-copy="b"]');
-  await h.tick();
-  assert.equal(h.copied(), 'Buy stamps');
-  h.click('#active [data-copy="a"]');
-  await h.tick();
-  assert.equal(h.copied(), "Fix the gate latch\nOn the Whiteboard's Now list for 3 days.");
-  assert.equal(h.$('#active [data-copy="a"]').textContent, 'copied');
-  await new Promise(r => setTimeout(r, 1300));
-  assert.equal(h.$('#active [data-copy="a"]').textContent, 'copy');
-});
-
-test('the rest is as it was: edit in place, the cap of seven; the tick frees a slot', async () => {
-  const h = boot({ seed: { active: [1, 2, 3, 4, 5, 6, 7].map(i => ({ id: 'a' + i, text: 'T' + i, since: NOW })), backlog: [{ id: 'b', text: 'Eighth' }] } });
-  assert.equal(h.$('[data-push]').disabled, true);
-  h.click('[data-done="a1"]');
-  await new Promise(r => setTimeout(r, 600));
-  assert.equal(h.stored().active.length, 6);
-  assert.equal(h.$('[data-push]').disabled, false);
-  h.click('[data-edit="b"]');
-  const input = h.$('input.edit'); input.value = 'Eighth, edited';
-  input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  assert.equal(h.stored().backlog[0].text, 'Eighth, edited');
-});
-
-// --- W1: the archive -------------------------------------------------------
-// Made-up programs only: real program names never enter this public repo.
-
-test('the tick moves a task to the archive, stamped with when, newest first', async () => {
-  const h = boot({ seed: { active: [
-    { id: 'a', text: 'Fix the gate latch', since: NOW - DAY },
-    { id: 'b', text: 'Return the library books', since: NOW },
-  ], backlog: [], archive: [{ id: 'old', text: 'Paint the shed', done: NOW - 3 * DAY }] } });
-  h.click('[data-done="a"]');
-  await new Promise(r => setTimeout(r, 600));
-  const s = h.stored();
-  assert.deepEqual(s.active.map(t => t.id), ['b']);
-  assert.deepEqual(s.archive.map(t => t.id), ['a', 'old']);
-  assert.equal(s.archive[0].done, NOW);
-  assert.equal(s.archive[0].since, undefined, 'the Now stamp does not travel to the archive');
-  assert.equal(h.$('#archive-head').textContent, 'Archive · 2');
-  assert.deepEqual(h.$$('#archive .row').map(r => r.textContent.trim().split(/\s{2,}|\n/)[0]), ['Fix the gate latch20 Sept', 'Paint the shed17 Sept']);
-});
-
-test('an older board without an archive opens and starts one; the archive survives a reload', async () => {
-  const seed = { active: [{ id: 'a', text: 'Oil the hinges', since: NOW }], backlog: [] };
-  const h = boot({ seed });
-  assert.equal(h.$('#archive-head').textContent, 'Archive · 0');
-  assert.match(h.$('#archive').textContent, /Nothing ticked off yet/);
-  h.click('[data-done="a"]');
-  await new Promise(r => setTimeout(r, 600));
-  const again = boot({ seed: h.stored() });
-  assert.equal(again.$('#archive-head').textContent, 'Archive · 1');
-  assert.match(again.$('#archive').textContent, /Oil the hinges/);
-});
-
-test('an archived task from another year shows the year', () => {
-  const h = boot({ seed: { active: [], backlog: [], archive: [{ id: 'x', text: 'Old one', done: new Date('2025-12-30T12:00:00Z').getTime() }] } });
-  assert.match(h.$('#archive .meta').textContent, /30 Dec 2025/);
-});
-
-// --- W2: programs -----------------------------------------------------------
-
-function addPrograms(h, text) {
-  h.$('#prog-field').value = text;
-  h.click('#prog-add');
-}
-
-test('a board that never had a program list starts with an empty one, saved; a started list is left alone', () => {
-  const fresh = boot();
-  assert.deepEqual(fresh.stored().programs, []);
-  assert.equal(fresh.$('#programs-head').textContent, 'Programs · 0');
-  const older = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'B' }] } });
-  assert.deepEqual(older.stored().programs, [], 'an older board without the key gets an empty list');
-  const started = boot({ seed: { active: [], backlog: [], programs: [{ id: 'p1', name: 'Garden Revival' }] } });
-  assert.deepEqual(started.stored().programs.map(p => p.name), ['Garden Revival']);
-});
-
-test('an empty program list means no picker; programs are added one at a time or pasted as a list', () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
-  assert.equal(h.$('[data-prog]'), null, 'no picker before there are programs');
-  assert.equal(h.$('#programs-head').textContent, 'Programs · 0');
-  addPrograms(h, 'Garden Revival');
-  addPrograms(h, 'List:\n- Harbor Walks\n• Kitchen Lab\n\n1. garden revival\n  Book Club  ');
-  // The heading line ("List:") is skipped, the duplicate (any case) too; bullets are stripped.
-  assert.deepEqual(h.stored().programs.map(p => p.name), ['Garden Revival', 'Harbor Walks', 'Kitchen Lab', 'Book Club']);
-  assert.equal(h.$('#programs-head').textContent, 'Programs · 4');
-  assert.equal(h.$('#prog-field').value, '');
-  assert.ok(h.$('[data-prog="b"]'), 'the picker appears once there are programs');
-});
-
-function pasteTasks(h, text) {
-  const e = new h.w.Event('paste', { bubbles: true, cancelable: true });
-  Object.defineProperty(e, 'clipboardData', { value: { getData: () => text } });
-  h.$('#field').dispatchEvent(e);
-  return e;
-}
-
-test('a typed task goes on top of the backlog', () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
-  h.$('#field').value = 'Oil the hinges';
-  h.click('#add');
-  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Oil the hinges', 'Sort the toolbox']);
-  assert.match(h.$('#backlog .task').textContent, /Oil the hinges/, 'and shows first');
-});
-
-test('a list pasted into the task field adds one backlog task per line; a one-line paste is an ordinary paste', () => {
-  const h = boot({ seed: { active: [{ id: 'a', text: 'Prune the roses', since: NOW }], backlog: [{ id: 'b', text: 'Sort the toolbox' }], programs: [] } });
-  const e = pasteTasks(h, 'Tasks:\n- Read the garden plan and pick a bed — 10 min\n\n2. sort the toolbox\nPrune the roses\n  Oil the hinges  ');
-  assert.ok(e.defaultPrevented, 'the list never lands in the field as one line');
-  // The heading and the empty line are skipped, bullets stripped; a task already on Now or the backlog (any case) is not added twice.
-  assert.deepEqual(h.stored().backlog.map(t => t.text), ['Read the garden plan and pick a bed — 10 min', 'Oil the hinges', 'Sort the toolbox'], 'on top, in the list\'s order');
-  assert.equal(h.stored().active.length, 1);
-  assert.equal(h.$('#status').textContent, '2 tasks added from the list.');
-  const one = pasteTasks(h, 'Water the ferns');
-  assert.equal(one.defaultPrevented, false);
-  assert.equal(h.stored().backlog.length, 3);
-});
-
-test('a task picks a program, the row shows it, and it stays with the task into the archive', async () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Prune the roses' }], programs: [{ id: 'p1', name: 'Garden Revival' }, { id: 'p2', name: 'Kitchen Lab' }] } });
-  const sel = h.$('[data-prog="b"]');
-  assert.deepEqual([...sel.options].map(o => o.textContent), ['no program', 'Garden Revival', 'Kitchen Lab']);
-  sel.value = 'p1';
-  sel.dispatchEvent(new h.w.Event('change', { bubbles: true }));
-  assert.equal(h.stored().backlog[0].program, 'p1');
-  assert.equal(h.$('[data-prog="b"]').value, 'p1');
-  assert.ok(h.$('[data-prog="b"]').classList.contains('set'));
-  h.click('[data-push="b"]');
-  assert.equal(h.$('#active [data-prog="b"]').value, 'p1', 'the program travels to Now');
-  h.click('[data-done="b"]');
-  await new Promise(r => setTimeout(r, 600));
-  assert.equal(h.stored().archive[0].program, 'p1');
-  assert.match(h.$('#archive .meta').textContent, /20 Sept · Garden Revival/);
-  // Clearing back to "no program" removes it.
-  const h2 = boot({ seed: { active: [], backlog: [{ id: 'c', text: 'C', program: 'p1' }], programs: [{ id: 'p1', name: 'Garden Revival' }] } });
-  const s2 = h2.$('[data-prog="c"]'); s2.value = '';
-  s2.dispatchEvent(new h2.w.Event('change', { bubbles: true }));
-  assert.equal(h2.stored().backlog[0].program, undefined);
-});
-
-test('a program is renamed by tapping it, and every task shows the new name', () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'B', program: 'p1' }], programs: [{ id: 'p1', name: 'Garden Revivel' }] } });
-  h.click('[data-prog-edit="p1"]');
-  const input = h.$('input.edit'); input.value = 'Garden Revival';
-  input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  assert.equal(h.stored().programs[0].name, 'Garden Revival');
-  assert.equal(h.$('[data-prog="b"]').selectedOptions[0].textContent, 'Garden Revival');
-});
-
-/* ---- Export for agent (Agent design 5) ---- */
-
-// NOW is Sunday 2026-09-20; the week started Monday 2026-09-14.
-const PROGRAMS = ['Health', 'Family', 'Wider family', 'Adventures', 'Creative Home', 'Foundations',
-  'Advisory board', 'House as lab', 'Nature retreat', 'Home support team', 'School prep'].map((name, i) => ({ id: 'd' + i, name }));
-const EXPORT_BOARD = () => ({
-  programs: PROGRAMS.map(p => ({ ...p })).concat({ id: 'zz', name: 'Added later' }),
+// A v17 board: Now, the backlog with a blocked and a let-go history, Kairos
+// steps open and done, a group with steps, sizes and stamps.
+const V17 = () => ({
   active: [
-    { id: 'a1', text: 'Fix the gate latch', program: 'd4', since: NOW - 3 * DAY },
-    { id: 'a2', text: 'PRIVATE health task', program: 'd0', since: NOW },
-    { id: 'a3', text: 'PRIVATE no-program task', since: NOW },
+    { id: 'n1', text: 'Fix the gate', since: NOW - 2 * DAY, added: NOW - 9 * DAY, size: 'hour', program: 'p1' },
+    { id: 'k1', text: 'Pull every day', kairos: 'aaaaaaaaaa', from: 'Moneta 8', since: NOW - DAY, added: NOW - 3 * DAY, program: 'pk' },
   ],
   backlog: [
-    { id: 'b1', text: 'Brief the cleaner', program: 'd9' },
-    { id: 'b2', text: 'PRIVATE school task', program: 'd10' },
-    { id: 'b3', text: 'PRIVATE family task', program: 'd5' },
-    { id: 'b4', text: 'PRIVATE added-program task', program: 'zz' },
-    { id: 'b5', text: 'PRIVATE wider-family task', program: 'd2' },
-    { id: 'b6', text: 'PRIVATE family endeavour', program: 'd1' },
+    { id: 'b1', text: 'Paint the shed', added: NOW - 30 * DAY, paused: NOW - 4 * DAY, program: 'p1',
+      steps: [{ id: 's1', text: 'Buy paint', size: 'min' }, { id: 's2', text: 'Sand', done: NOW - DAY }] },
+    { id: 'b2', text: 'Call the dentist', added: NOW - 12 * DAY },
+    { id: 'k2', text: 'Read the drafts', kairos: 'bbbbbbbbbb', from: 'Public footprint 1', added: NOW - 20 * DAY, program: 'pk' },
   ],
   archive: [
-    { id: 'x1', text: 'ARCHIVED this week', program: 'd4', done: NOW - 2 * DAY },
-    { id: 'x2', text: 'ARCHIVED private this week', program: 'd0', done: NOW - 6 * DAY + 3600 * 1000 },
-    { id: 'x3', text: 'ARCHIVED last week', program: 'd4', done: NOW - 8 * DAY },
+    { id: 'a1', text: 'Old idea', done: NOW - 5 * DAY, letGo: true },
+    { id: 'k3', text: 'A Kairos step done', kairos: 'cccccccccc', done: NOW - 6 * DAY, program: 'pk' },
   ],
-});
-function exportDoc(h) {
-  h.click('#export');
-  return JSON.parse(h.$('#export-doc').textContent);
-}
-
-test('Export for agent shows, before anything is copied, the shared tasks on Now and the backlog, the week\'s count and the held-back count', () => {
-  const h = boot({ seed: EXPORT_BOARD() });
-  assert.ok(h.$('#export-box').hidden, 'nothing shown until tapped');
-  const x = exportDoc(h);
-  assert.ok(!h.$('#export-box').hidden);
-  assert.match(h.$('.export').textContent, /This is what leaves the phone/);
-  assert.deepEqual(x, {
-    app: 'whiteboard', exported: '2026-09-20', about: x.about,
-    now: [{ text: 'Fix the gate latch', program: 'Creative Home', days_on_now: 3 }],
-    next: [{ text: 'Brief the cleaner', program: 'Home support team' }],
-    done_this_week: 2,
-    held_back: 7,
-  });
-  assert.match(h.$('#export-note').textContent, /7 held back/);
-  assert.equal(h.copied(), null, 'nothing copied by opening it');
+  programs: [{ id: 'p1', name: 'House' }, { id: 'pk', name: 'Kairos OS' }],
 });
 
-test('held-back tasks never appear: the private defaults, an added program, no program; nor the archive\'s text, ids or timestamps', () => {
-  const h = boot({ seed: EXPORT_BOARD() });
-  h.click('#export');
-  const text = h.$('#export-doc').textContent;
-  for (const s of ['PRIVATE', 'ARCHIVED', 'Health', 'Family', 'School', 'Added later', '"id"', 'since', '"done"', String(NOW).slice(0, 6)])
-    assert.ok(!text.includes(s), `"${s}" is not in the export`);
-  for (const id of ['a1', 'a2', 'b1', 'x1', 'd4', 'd9', 'zz'])
-    assert.doesNotMatch(text, new RegExp(`"${id}"`), `id ${id} is not in the export`);
+const texts = (h, sel) => h.$$(`${sel} .task`).map(e => e.textContent);
+
+// ---- the first screen ---------------------------------------------------
+
+test('a fresh board shows only the add box and Ready; Icebox, Archive and Programs are collapsed below', () => {
+  const h = boot();
+  assert.ok(h.$('#field') && h.$('#add') && h.$('#ready'));
+  for (const id of ['icebox-box', 'archive-box', 'programs-box']) assert.equal(h.$('#' + id).open, false, id);
+  assert.equal(h.$('#icebox-head').textContent, 'Icebox · 0');
+  assert.equal(h.$('#archive-head').textContent, 'Archive · 0');
+  const order = [...h.d.querySelectorAll('#field, #ready, #icebox-box, #archive-box, #programs-box')].map(e => e.id);
+  assert.deepEqual(order, ['field', 'ready', 'icebox-box', 'archive-box', 'programs-box']);
 });
 
-test('a held-back program stays held back after a rename; a shared one is exported under its new name', () => {
-  const board = EXPORT_BOARD();
-  board.programs.find(p => p.id === 'd10').name = 'Creative projects';
-  board.programs.find(p => p.id === 'd4').name = 'Home studio';
-  const h = boot({ seed: board });
-  const x = exportDoc(h);
-  assert.ok(!JSON.stringify(x).includes('PRIVATE'));
-  assert.equal(x.now[0].program, 'Home studio');
-  assert.equal(x.held_back, 7);
+test('the version label is whiteboard-v18 and matches the worker cache name', () => {
+  const h = boot();
+  assert.equal(h.$('.ver').textContent, 'whiteboard-v18');
+  assert.equal(SW.match(/const CACHE = '([^']+)'/)[1], 'whiteboard-v18');
 });
 
-test('Copy puts exactly the shown document on the clipboard; Close hides it; nothing is stored', async () => {
-  const seed = EXPORT_BOARD();
-  const h = boot({ seed });
-  const loaded = h.stored();   // the board as load() leaves it (old tasks stamped `added`)
-  h.click('#export');
-  const shown = h.$('#export-doc').textContent;
-  h.click('#export-copy');
-  await h.tick();
-  assert.equal(h.copied(), shown);
-  assert.equal(h.$('#export-copy').textContent, 'Copied');
-  h.click('#export-close');
-  assert.ok(h.$('#export-box').hidden);
-  assert.deepEqual(h.stored(), loaded, 'the export changes nothing stored');
+test('gone from the screen: Now, its cap, the time chips, sizes, ages, copy, Talk it through, blocked, let go, the export, Kairos', () => {
+  const h = boot({ seed: V17() });
+  h.$('#icebox-box').open = true;
+  for (const sel of ['#active', '#count', '#have', '[data-have]', '[data-size]', '[data-step-size]', '.age', '[data-copy]',
+                     '[data-talk]', '[data-blocked]', '[data-letgo]', '#export', '.stuck', '#kairos-connect', '#kairos-token', '[data-push]'])
+    assert.equal(h.$(sel), null, sel);
+  assert.doesNotMatch(h.d.body.textContent, /days on the board|I have|Export for agent|Connect to Kairos|\/ 7/);
 });
 
-test('the open export follows the board: a task pushed to Now moves from next to now', () => {
-  const h = boot({ seed: EXPORT_BOARD() });
-  h.click('#export');
-  h.click('[data-push="b1"]');
-  const x = JSON.parse(h.$('#export-doc').textContent);
-  assert.deepEqual(x.next, []);
-  assert.deepEqual(x.now.map(t => t.text), ['Fix the gate latch', 'Brief the cleaner']);
+// ---- add, tick, move, reload --------------------------------------------
+
+test('a typed task goes to the top of Ready, with the program picked beside the field', () => {
+  const h = boot({ seed: { ready: [], icebox: [], archive: [], programs: [{ id: 'p1', name: 'House' }], v: 18 } });
+  h.type('Call the dentist');
+  h.$('#field-prog').value = 'p1';
+  h.type('Fix the gate');
+  assert.deepEqual(texts(h, '#ready'), ['Fix the gate', 'Call the dentist']);
+  const t = h.stored().ready[0];
+  assert.equal(t.program, 'p1');
+  assert.equal(t.added, NOW);
+  assert.match(h.$('#ready .label').textContent, /House/);
+  assert.equal(h.$('#field-prog').value, '', 'the picker goes back to no program');
 });
 
-/* ---- Kairos (Pace 6, Charter v1.6): the dashboard issue, synced with the board ---- */
-
-const TOKEN_KEY = 'whiteboard:kairos-token';
-const SYNC_KEY = 'whiteboard:kairos';
-const TICKS_KEY = 'whiteboard:kairos-ticks';
-const ISSUE = 'https://api.github.com/repos/nklassen-app/kairos_v3/issues/11';
-const TOKEN = { token: 'github_pat_madeup123', since: NOW - 5 * DAY };
-// A made-up dashboard body in dashboard.py's shape — never the real issue.
-const BODY = [
-  '<!-- kairos-dashboard: written by kairos-foundation/scripts/dashboard.py -->',
-  '**Refreshed 2026-09-20** · tick a box when it is done.',
-  '',
-  '### 1 · Kairos system',
-  '<sub>last work 2026-09-20</sub>',
-  '',
-  '**Garden plan** — The garden, planned · <sub>2 for you</sub>',
-  '- [ ] Garden plan 3 · Pick the bed for the roses in `garden.md` — 10 min <!-- k:aaaaaaaaaa -->',
-  '- [x] Garden plan 4 · Order the **mulch** — 5 min <!-- k:bbbbbbbbbb -->',
-  '',
-  '**Toolshed** — The shed, sorted · <sub>1 for you</sub>',
-  '- [ ] On trial · Decide whether the shed has been tried enough — 2 min <!-- k:cccccccccc -->',
-  '',
-  '### Recently done (since 2026-09-13)',
-  '- [ ] Not a step — a line after the done heading <!-- k:dddddddddd -->',
-].join('\n');
-const ROSES = 'Pick the bed for the roses in garden.md — 10 min';
-const SHED = 'Decide whether the shed has been tried enough — 2 min';
-const answer = (body, status = 200) => () => Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve({ body }) });
-// A stand-in for the issue: GET answers its body, PATCH replaces it.
-function issue(body){
-  const it = { body, writes: [] };
-  it.fetch = (url, opts) => {
-    if (opts.method === 'PATCH'){ it.body = JSON.parse(opts.body).body; it.writes.push(it.body); }
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ body: it.body }) });
-  };
-  return it;
-}
-const settle = async h => { for (let i = 0; i < 10; i++) await h.tick(); };
-const texts = list => list.map(t => t.text);
-
-test('the page may call one outside address, api.github.com; the page has one network call and the worker leaves other addresses alone', () => {
-  const csp = HTML.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
-  assert.ok(csp, 'a CSP in the page');
-  const hosts = csp[1].match(/https?:\/\/[^\s;]+/g);
-  assert.deepEqual(hosts, ['https://api.github.com'], 'no other host anywhere in the policy');
-  assert.match(csp[1], /connect-src 'self' https:\/\/api\.github\.com;/);
-  assert.match(csp[1], /default-src 'self'/);
-  assert.equal((HTML.match(/fetch\(/g) || []).length, 1, 'one fetch in the page');
-  assert.match(HTML, /async function kairosDoor\(token, body\)\{\n  const res = await fetch\(ISSUE,/, 'and it is the door, to the one issue');
-  assert.equal((HTML.match(/https:\/\/api\.github\.com\/[^'"\s]*/g) || []).filter(u => !u.endsWith('/')).length, 1, 'one API address in the code');
-  assert.match(SW, /if \(new URL\(e\.request\.url\)\.origin !== self\.location\.origin\) return;/);
+test('a Ready row has a tick and one control to the Icebox; an Icebox row has one control to Ready and nothing else', () => {
+  const h = boot({ seed: { ready: [{ id: 'r', text: 'R' }], icebox: [{ id: 'i', text: 'I' }], archive: [], programs: [], v: 18 } });
+  const row = h.$('#ready [data-row="r"]');
+  assert.equal(row.querySelectorAll('button').length, 2);
+  assert.ok(row.querySelector('[data-done="r"]') && row.querySelector('[data-ice="r"]'));
+  const ice = h.$('#icebox [data-row="i"]');
+  assert.equal(ice.querySelectorAll('button, select, input').length, 1);
+  assert.ok(ice.querySelector('[data-unice="i"]'));
 });
 
-test('not connected: no call is made, the connect field is open, and says so', async () => {
-  const h = boot({ fetch: answer(BODY) });
-  await settle(h);
-  assert.equal(h.calls.length, 0, 'no token, no call');
-  assert.ok(h.$('#kairos-connect').open);
-  assert.match(h.$('#kairos-note').textContent, /Not connected/);
+test('a task moves to the Icebox and back to the top of Ready; the counts follow', () => {
+  const h = boot({ seed: { ready: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }], icebox: [], archive: [], programs: [], v: 18 } });
+  h.click('[data-ice="b"]');
+  assert.deepEqual(texts(h, '#ready'), ['A']);
+  assert.equal(h.$('#icebox-head').textContent, 'Icebox · 1');
+  h.click('[data-unice="b"]');
+  assert.deepEqual(texts(h, '#ready'), ['B', 'A']);
+  assert.equal(h.$('#icebox-head').textContent, 'Icebox · 0');
 });
 
-test('connected: the one issue is read with the token, and N.\'s open steps land on the backlog as ordinary tasks; ticked ones and the done list do not', async () => {
-  const h = boot({ seed: { active: [], backlog: [{ id: 'b', text: 'Mow the lawn' }], archive: [] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
-  await settle(h);
-  assert.equal(h.calls.length, 1);
-  const { url, opts } = h.calls[0];
-  assert.equal(url, ISSUE);
-  assert.equal(opts.method, 'GET');
-  assert.equal(opts.body, undefined, 'a read sends nothing');
-  assert.equal(opts.headers.Authorization, 'Bearer github_pat_madeup123');
-  const b = h.stored().backlog;
-  assert.deepEqual(texts(b), [ROSES, SHED, 'Mow the lawn'], 'on top, in the issue\'s order');
-  assert.deepEqual(b.slice(0, 2).map(t => [t.kairos, t.from]), [['aaaaaaaaaa', 'Garden plan 3'], ['cccccccccc', 'Toolshed']]);
-  assert.deepEqual(h.$$('#backlog .from').map(n => n.textContent), ['Kairos · Garden plan 3', 'Kairos · Toolshed']);
-  assert.match(h.$('#kairos-note').textContent, /^Synced 1\d:00\. 2 new tasks on the backlog\.$/);
-  assert.equal(h.$$('#backlog [data-push]').length, 3, 'each can go to Now like any task');
+test('the tick moves a task to the archive, stamped, newest first; there is no limit on Ready', async () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: 't' + i, text: 'T' + i }));
+  const h = boot({ seed: { ready: many, icebox: [], archive: [], programs: [], v: 18 } });
+  assert.equal(h.$$('#ready [data-row]').length, 12);
+  h.click('[data-done="t3"]');
+  await h.wait(600);
+  assert.equal(h.$$('#ready [data-row]').length, 11);
+  assert.equal(h.stored().archive[0].id, 't3');
+  assert.equal(h.stored().archive[0].done, NOW);
+  assert.equal(h.$('#archive-head').textContent, 'Archive · 1');
 });
 
-test('a sync never adds a step twice: not when it is on Now, edited, or already ticked', async () => {
-  const seed = { active: [{ id: 'a', text: 'Roses, my words', kairos: 'aaaaaaaaaa', from: 'Garden plan 3', since: NOW }], backlog: [],
-    archive: [{ id: 'c', text: SHED, kairos: 'cccccccccc', done: NOW - DAY }] };
-  const it = issue(BODY); // the shed still open in the issue: ticked here, and the tick already sent before Claude applied it
-  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: it.fetch });
-  await settle(h);
-  assert.deepEqual(texts(h.stored().active), ['Roses, my words']);
-  assert.deepEqual(texts(h.stored().backlog), []);
-  assert.match(h.$('#kairos-note').textContent, /^Synced 1\d:00\.$/);
+test('the state survives a reload: added, ticked, iced and un-iced', async () => {
+  const h = boot({ seed: { ready: [], icebox: [], archive: [], programs: [], v: 18 } });
+  h.type('One'); h.type('Two'); h.type('Three');
+  h.click('[data-ice="' + h.stored().ready[0].id + '"]');            // Three to the Icebox
+  h.click('[data-done="' + h.stored().ready[0].id + '"]');            // Two ticked
+  await h.wait(600);
+  const r = h.reload();
+  assert.deepEqual(texts(r, '#ready'), ['One']);
+  assert.deepEqual(r.stored().icebox.map(t => t.text), ['Three']);
+  assert.deepEqual(r.stored().archive.map(t => t.text), ['Two']);
 });
 
-test('ticking a Kairos task on Now ticks exactly its box in the issue, and nothing of the board is sent', async () => {
-  const seed = { active: [{ id: 'a', text: 'Roses, my words', kairos: 'aaaaaaaaaa', from: 'Garden plan 3', since: NOW, program: 'p' }],
-    backlog: [{ id: 'b', text: 'Private errand' }], archive: [{ id: 'z', text: 'Old private task', done: NOW }], programs: [{ id: 'p', name: 'Private program' }] };
-  const it = issue(BODY);
-  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: it.fetch });
-  await settle(h);
-  h.click('[data-done="a"]');
-  await new Promise(r => setTimeout(r, 520));
-  await settle(h);
-  assert.equal(it.writes.length, 1, 'one write');
-  const before = BODY.split('\n'), after = it.writes[0].split('\n');
-  const changed = before.map((l, i) => l !== after[i] ? i : -1).filter(i => i >= 0);
-  assert.equal(after.length, before.length);
-  assert.deepEqual(changed, [7], 'one line changed');
-  assert.equal(after[7], before[7].replace('- [ ] ', '- [x] '), 'its box, ticked');
-  const patch = h.calls.find(c => c.opts.method === 'PATCH');
-  assert.equal(patch.url, ISSUE);
-  assert.deepEqual(Object.keys(JSON.parse(patch.opts.body)), ['body']);
-  for (const word of ['Roses, my words', 'Private errand', 'Old private task', 'Private program']) assert.ok(!JSON.stringify(h.calls).includes(word), word);
-  assert.deepEqual(h.w.localStorage.getItem(TICKS_KEY), '[]', 'nothing left to send');
-  assert.deepEqual(texts(h.stored().archive), ['Roses, my words', 'Old private task'], 'the task is archived as usual');
-  assert.deepEqual(texts(h.stored().backlog), [SHED, 'Private errand'], 'and the read after the write does not bring it back');
-  assert.ok(!JSON.stringify(h.stored()).includes('github_pat_'), 'the token is not in the board document');
-  h.click('#export');
-  assert.ok(!h.$('#export-doc').textContent.includes('github_pat_'), 'nor in the export');
-  assert.ok(!h.$('#export-doc').textContent.includes('Pick the bed'), 'and Kairos tasks, having no program, are held back');
+test('a task\'s steps show under it on Ready, the done ones marked; a step can\'t be ticked or sized there', () => {
+  const h = boot({ seed: { ready: [{ id: 'g', text: 'Paint', steps: [{ id: 's1', text: 'Buy paint' }, { id: 's2', text: 'Sand', done: NOW }] }],
+                           icebox: [], archive: [], programs: [], v: 18 } });
+  assert.deepEqual(h.$$('#ready .step .task').map(e => e.textContent), ['Buy paint', 'Sand']);
+  assert.ok(h.$('#ready .step.ticked'));
+  assert.equal(h.$('[data-step-done]'), null);
 });
 
-test('a tick made offline waits, says so, and is sent at the next sync; a box no longer open is not written', async () => {
-  const seed = { active: [{ id: 'a', text: ROSES, kairos: 'aaaaaaaaaa', since: NOW }], backlog: [], archive: [] };
-  const off = boot({ seed, store: { [TOKEN_KEY]: TOKEN, [SYNC_KEY]: { at: NOW - DAY } } });
-  await settle(off);
-  off.click('[data-done="a"]');
-  await new Promise(r => setTimeout(r, 520));
-  await settle(off);
-  assert.equal(off.w.localStorage.getItem(TICKS_KEY), '["aaaaaaaaaa"]');
-  assert.match(off.$('#kairos-note').textContent, /Could not reach GitHub\. Last synced 19 Sept, 1\d:00\. 1 tick will be sent next time\./);
-  const board = JSON.parse(off.w.localStorage.getItem(KEY));
-  const it = issue(BODY);
-  const on = boot({ seed: board, store: { [TOKEN_KEY]: TOKEN, [TICKS_KEY]: ['aaaaaaaaaa', 'bbbbbbbbbb'] }, fetch: it.fetch });
-  await settle(on);
-  assert.equal(it.writes.length, 1, 'only the open box is written; the one already ticked is not');
-  assert.match(it.body, /- \[x\] Garden plan 3/);
-  assert.equal(on.w.localStorage.getItem(TICKS_KEY), '[]');
-  assert.deepEqual(texts(on.stored().backlog), [SHED]);
+test('a task\'s text still edits in place on Ready', () => {
+  const h = boot({ seed: { ready: [{ id: 'a', text: 'Call dentist' }], icebox: [], archive: [], programs: [], v: 18 } });
+  h.click('#ready [data-edit="a"]');
+  const input = h.$('#ready input.edit');
+  input.value = 'Call the dentist';
+  input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.equal(h.stored().ready[0].text, 'Call the dentist');
 });
 
-test('a step ticked in the issue goes to the archive; a step gone from it leaves the board; a wrong answer changes nothing', async () => {
-  const seed = { active: [{ id: 'a', text: 'Mulch', kairos: 'bbbbbbbbbb', since: NOW }],
-    backlog: [{ id: 'g', text: 'An old step', kairos: 'eeeeeeeeee' }, { id: 'm', text: 'Mine' }], archive: [] };
-  const h = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
-  await settle(h);
-  assert.deepEqual(texts(h.stored().active), []);
-  assert.deepEqual(texts(h.stored().archive), ['Mulch']);
-  assert.deepEqual(texts(h.stored().backlog), [ROSES, SHED, 'Mine']);
-  assert.match(h.$('#kairos-note').textContent, /2 new tasks on the backlog; 2 tasks done or changed in Kairos, taken off\./);
-  const wrong = boot({ seed, store: { [TOKEN_KEY]: TOKEN }, fetch: answer('Not Found') });
-  await settle(wrong);
-  const kept = wrong.stored();
-  const ids = l => l.map(t => t.id);
-  assert.deepEqual([ids(kept.active), ids(kept.backlog), ids(kept.archive)], [['a'], ['g', 'm'], []], 'a body without the dashboard marker empties nothing');
-  assert.match(wrong.$('#kairos-note').textContent, /Could not reach GitHub/);
+test('a pasted list adds one Ready task per line', () => {
+  const h = boot({ seed: { ready: [], icebox: [], archive: [], programs: [], v: 18 } });
+  const e = new h.w.Event('paste', { bubbles: true, cancelable: true });
+  e.clipboardData = { getData: () => '- One\n- Two\n' };
+  h.$('#field').dispatchEvent(e);
+  assert.deepEqual(texts(h, '#ready'), ['One', 'Two']);
 });
 
-test('a refused token says so and reopens the connect field; a token that cannot write says what it needs', async () => {
-  const refused = boot({ store: { [TOKEN_KEY]: TOKEN }, fetch: answer('', 401) });
-  await settle(refused);
-  assert.match(refused.$('#kairos-note').textContent, /refused the token/);
-  assert.ok(refused.$('#kairos-connect').open);
-  const readOnly = boot({ store: { [TOKEN_KEY]: TOKEN, [TICKS_KEY]: ['aaaaaaaaaa'] },
-    fetch: (url, opts) => opts.method === 'PATCH' ? answer('', 403)() : answer(BODY)() });
-  await settle(readOnly);
-  assert.match(readOnly.$('#kairos-note').textContent, /Issues read and write.*1 tick will be sent then/);
-  assert.equal(readOnly.w.localStorage.getItem(TICKS_KEY), '["aaaaaaaaaa"]', 'the tick is kept');
+test('programs are added and renamed as before, and the archive shows let go and the year', () => {
+  const h = boot({ seed: { ready: [], icebox: [], archive: [{ id: 'a', text: 'Old', done: new Date('2025-03-01').getTime(), letGo: true }],
+                           programs: [], v: 18 } });
+  h.$('#prog-field').value = 'House\nGarden';
+  h.click('#prog-add');
+  assert.equal(h.$('#programs-head').textContent, 'Programs · 2');
+  assert.match(h.$('#archive .meta').textContent, /let go · 1 Mar 2025/);
 });
 
-test('the token warns 30 days before its 90 run out, and says when it may have run out', async () => {
-  const soon = boot({ store: { [TOKEN_KEY]: { ...TOKEN, since: NOW - 70 * DAY } }, fetch: answer(BODY) });
-  await settle(soon);
-  assert.match(soon.$('#kairos-note').textContent, /runs out in 20 days/);
-  const fresh = boot({ store: { [TOKEN_KEY]: { ...TOKEN, since: NOW - 59 * DAY } }, fetch: answer(BODY) });
-  await settle(fresh);
-  assert.doesNotMatch(fresh.$('#kairos-note').textContent, /run/);
-  const old = boot({ store: { [TOKEN_KEY]: { ...TOKEN, since: NOW - 91 * DAY } }, fetch: answer(BODY) });
-  await settle(old);
-  assert.match(old.$('#kairos-note').textContent, /may have run out/);
+// ---- the migration from v17 ---------------------------------------------
+
+test('first load of v18: the v17 board is backed up unchanged on the phone before anything moves', () => {
+  const before = JSON.stringify(V17());
+  const h = boot({ raw: { [KEY]: before } });
+  assert.equal(h.item(BACKUP), before);
 });
 
-test('connecting takes only a fine-grained token, stores it apart from the board, and syncs at once', async () => {
-  const h = boot({ fetch: answer(BODY) });
-  await settle(h);
-  h.$('#kairos-token').value = 'ghp_classic123';
-  h.click('#kairos-save');
-  assert.match(h.$('#kairos-note').textContent, /start with github_pat_/);
-  assert.equal(h.w.localStorage.getItem(TOKEN_KEY), null);
-  h.$('#kairos-token').value = '  github_pat_madeup123  ';
-  h.click('#kairos-save');
-  await settle(h);
-  assert.deepEqual(JSON.parse(h.w.localStorage.getItem(TOKEN_KEY)), { token: 'github_pat_madeup123', since: NOW });
-  assert.equal(h.$('#kairos-token').value, '', 'the field is cleared');
-  assert.equal(h.calls.length, 1);
-  assert.deepEqual(texts(h.stored().backlog), [ROSES, SHED]);
-});
-
-/* ---- Whiteboard flow 2: a stuck task — talk it through, blocked, let go ---- */
-
-const STUCK_BOARD = () => ({
-  programs: PROGRAMS.map(p => ({ ...p })),
-  active: [{ id: 'a', text: 'Fix the gate latch', program: 'd4', since: NOW - 2 * DAY, added: NOW - 11 * DAY }],
-  backlog: [
-    { id: 'b', text: 'Ten days, not yet', program: 'd4', added: NOW - 10 * DAY },
-    { id: 'c', text: 'PRIVATE health task', program: 'd0', added: NOW - 20 * DAY },
-    { id: 'd', text: 'PRIVATE no-program task', added: NOW - 20 * DAY },
-    { id: 'k', text: 'A Kairos step', kairos: 'cccccccccc', from: 'Garden plan 3', added: NOW - 12 * DAY },
-  ],
-  archive: [],
-});
-
-test('a task joins the board stamped; old tasks are stamped at load; the stamp stays through Now and back', () => {
-  const h = boot({ seed: { active: [{ id: 'a', text: 'Old on Now', since: NOW }], backlog: [{ id: 'b', text: 'Old waiting' }] } });
-  assert.deepEqual([h.stored().active[0].added, h.stored().backlog[0].added], [NOW, NOW]);
-  h.type('Oil the hinges');
-  assert.equal(h.stored().backlog[1].added, NOW);
-  h.click('[data-push="b"]');
-  assert.equal(h.stored().active[1].added, NOW, 'pushing up keeps `added`');
-});
-
-test('a task on the board more than ten days, Now or backlog, is marked stuck; ten days is not', () => {
-  const h = boot({ seed: STUCK_BOARD() });
-  const marked = h.$$('.stuck').map(e => e.closest('[data-row]').dataset.row);
-  assert.deepEqual(marked, ['a', 'c', 'd', 'k']);
-  assert.match(h.$('[data-row="a"] .stuck').textContent, /11 days on the board/);
-});
-
-test('Talk it through copies a prompt with the task, only for shared programs and Kairos steps; never a private task', async () => {
-  const h = boot({ seed: STUCK_BOARD() });
-  assert.deepEqual(h.$$('[data-talk]').map(b => b.dataset.talk), ['a', 'k']);
-  h.click('[data-talk="a"]');
-  await h.tick();
-  const text = h.copied();
-  assert.match(text, /^This task has sat on my Whiteboard for 11 days, now on my Now list:\n"Fix the gate latch" \(program: Creative Home\)/);
-  assert.match(text, /one task\nper line/);
-  for (const s of ['PRIVATE', 'Ten days'])
-    assert.ok(!text.includes(s), `nothing else of the board: ${s}`);
-  assert.match(h.$('[data-talk="a"]').textContent, /copied/);
-  h.click('[data-talk="k"]');
-  await h.tick();
-  assert.match(h.copied(), /now in my backlog:\n"A Kairos step" \(Kairos · Garden plan 3\)/);
-  assert.equal(h.calls.length, 0, 'talking it through sends nothing');
-});
-
-test('blocked quiets the marker and starts the ten days over', () => {
-  const h = boot({ seed: STUCK_BOARD() });
-  h.click('[data-blocked="c"]');
-  assert.equal(h.$('[data-row="c"] .stuck'), null);
-  assert.equal(h.stored().backlog.find(t => t.id === 'c').paused, NOW);
-  const later = STUCK_BOARD();
-  later.backlog[1].paused = NOW - 11 * DAY;
-  const h2 = boot({ seed: later });
-  assert.match(h2.$('[data-row="c"] .stuck').textContent, /11 days on the board/, 'after another ten days it is back');
-});
-
-test('let go moves a task to the archive marked so, never counted as done; a Kairos step offers no let go', () => {
-  const h = boot({ seed: STUCK_BOARD() });
-  assert.equal(h.$('[data-letgo="k"]'), null);
-  h.click('[data-letgo="a"]');
+test('every open task I added goes to the Icebox, blocked ones too; Ready starts empty', () => {
+  const h = boot({ seed: V17() });
   const s = h.stored();
+  assert.deepEqual(s.ready, []);
+  assert.deepEqual(s.icebox.map(t => t.id), ['n1', 'b1', 'b2']);
   assert.deepEqual(s.active, []);
-  assert.equal(s.archive[0].id, 'a');
+  assert.deepEqual(s.backlog, []);
+  assert.equal(s.v, 18);
+});
+
+test('every stored field is kept: steps, programs, creation dates, size, Now stamp, blocked stamp', () => {
+  const h = boot({ seed: V17() });
+  const [n1, b1] = h.stored().icebox;
+  assert.deepEqual([n1.program, n1.added, n1.size, n1.since], ['p1', NOW - 9 * DAY, 'hour', NOW - 2 * DAY]);
+  assert.equal(b1.paused, NOW - 4 * DAY);
+  assert.deepEqual(b1.steps, V17().backlog[0].steps);
+});
+
+test('open imported tasks leave the board, kept out of sight; done ones stay in the archive; let go stays', () => {
+  const h = boot({ seed: V17() });
+  const s = h.stored();
+  assert.deepEqual(s.offBoard.map(t => t.id), ['k1', 'k2']);
+  assert.deepEqual(s.archive.map(t => t.id), ['a1', 'k3']);
   assert.equal(s.archive[0].letGo, true);
-  assert.equal(s.archive[0].since, undefined);
-  assert.match(h.$('#archive .row').textContent, /let go · /);
-  assert.match(h.$('#status').textContent, /Let go: Fix the gate latch/);
-  h.click('#export');
-  assert.equal(JSON.parse(h.$('#export-doc').textContent).done_this_week, 0, 'a let-go task is not done');
+  h.$('#icebox-box').open = true;
+  assert.doesNotMatch(h.d.body.textContent, /Pull every day|Read the drafts/);
+  assert.match(h.$('#status').textContent, /3 tasks to the Icebox.*2 Kairos tasks taken off the board/);
 });
 
-test('the export carries no board stamps: not added, not paused', () => {
-  const b = STUCK_BOARD(); b.backlog[0].paused = NOW;
-  const h = boot({ seed: b });
-  h.click('#export');
-  const doc = h.$('#export-doc').textContent;
-  for (const s of ['added', 'paused', 'letGo']) assert.ok(!doc.includes(s), s);
+test('the migration runs once: a second load changes nothing and keeps the first backup', () => {
+  const h = boot({ seed: V17() });
+  const after = h.item(KEY), backup = h.item(BACKUP);
+  const r = h.reload();
+  assert.equal(r.item(KEY), after);
+  assert.equal(r.item(BACKUP), backup);
+  assert.equal(r.$('#status').textContent, '');
 });
 
-/* ---- Whiteboard flow 6: a program picked at capture; Kairos tasks under Kairos OS ---- */
+// ---- no GitHub, no network ----------------------------------------------
 
-test('a new task can take its program as it is typed; the picker goes back to no program after', () => {
-  const none = boot({ seed: { active: [], backlog: [], programs: [] } });
-  assert.equal(none.$('#field-prog'), null, 'no picker beside the field before there are programs');
-  const h = boot({ seed: { active: [], backlog: [], programs: [{ id: 'p1', name: 'Garden Revival' }, { id: 'p2', name: 'Kitchen Lab' }] } });
-  const sel = h.$('#field-prog');
-  assert.deepEqual([...sel.options].map(o => o.textContent), ['no program', 'Garden Revival', 'Kitchen Lab']);
-  sel.value = 'p2';
-  h.type('Sharpen the knives');
-  assert.equal(h.stored().backlog[0].program, 'p2');
-  assert.equal(h.$('[data-prog]').value, 'p2', 'the row shows it at once');
-  assert.equal(h.$('#field-prog').value, '', 'the next task starts with no program');
-  h.$('#field').value = 'Oil the hinges';
-  h.click('#add');
-  assert.equal(h.stored().backlog[0].program, undefined);
+test('the stored GitHub token is deleted at load; nothing else of the old sync is touched', () => {
+  const h = boot({ seed: V17(), store: { [TOKEN]: { token: 'github_pat_madeup', since: NOW }, 'whiteboard:kairos': { at: NOW } } });
+  assert.equal(h.item(TOKEN), null);
+  assert.notEqual(h.item('whiteboard:kairos'), null);
+  assert.doesNotMatch(h.item(BACKUP), /github_pat/);
 });
 
-test('a program added later shows in the picker beside the field', () => {
-  const h = boot({ seed: { active: [], backlog: [], programs: [] } });
-  addPrograms(h, 'Harbor Walks');
-  assert.deepEqual([...h.$('#field-prog').options].map(o => o.textContent), ['no program', 'Harbor Walks']);
+test('no call reaches the network, at load, on a return to the app, or on a tick', async () => {
+  const h = boot({ seed: V17(), store: { [TOKEN]: { token: 'github_pat_madeup', since: NOW } } });
+  h.$('#icebox-box').open = true;
+  h.click('[data-unice="n1"]');
+  h.click('[data-done="n1"]');
+  await h.wait(600);
+  h.d.dispatchEvent(new h.w.Event('visibilitychange'));
+  await h.wait(10);
+  assert.deepEqual(h.calls, []);
 });
 
-test('a Kairos step lands under Kairos OS, made once if the list lacks it; the export still holds it back', async () => {
-  const h = boot({ seed: { active: [], backlog: [], archive: [], programs: [{ id: 'p1', name: 'kairos os' }] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
-  await settle(h);
-  const s = h.stored();
-  assert.deepEqual(s.backlog.map(t => t.program), ['p1', 'p1'], 'matched by name, any case');
-  assert.equal(s.programs.length, 1);
-  const bare = boot({ seed: { active: [], backlog: [], archive: [], programs: [] }, store: { [TOKEN_KEY]: TOKEN }, fetch: answer(BODY) });
-  await settle(bare);
-  const p = bare.stored().programs;
-  assert.deepEqual(p.map(x => x.name), ['Kairos OS'], 'made when missing');
-  assert.deepEqual(bare.stored().backlog.map(t => t.program), [p[0].id, p[0].id]);
-  bare.click('#export');
-  const doc = JSON.parse(bare.$('#export-doc').textContent);
-  assert.equal(doc.next.length, 0, 'Kairos OS is not a shared program');
-  assert.equal(doc.held_back, 2);
-});
-
-test('Kairos tasks already on the board or in the archive with no program get Kairos OS at load; a program N. set is kept', () => {
-  const h = boot({ seed: {
-    active: [{ id: 'a', text: 'A', kairos: 'aaaaaaaaaa', since: NOW }],
-    backlog: [{ id: 'b', text: 'B', kairos: 'bbbbbbbbbb', program: 'p2' }, { id: 'c', text: 'C' }],
-    archive: [{ id: 'd', text: 'D', kairos: 'dddddddddd', done: NOW }, { id: 'e', text: 'E', done: NOW }],
-    programs: [{ id: 'p1', name: 'Kairos OS' }, { id: 'p2', name: 'Kitchen Lab' }],
-  } });
-  const s = h.stored();
-  assert.equal(s.active[0].program, 'p1');
-  assert.equal(s.backlog[0].program, 'p2', 'kept');
-  assert.equal(s.backlog[1].program, undefined, 'not a Kairos task');
-  assert.equal(s.archive[0].program, 'p1', 'the archive too');
-  assert.equal(s.archive[1].program, undefined);
-  assert.match(h.$('#archive .meta').textContent, /Kairos OS/);
-  const plain = boot({ seed: { active: [], backlog: [{ id: 'c', text: 'C' }], archive: [], programs: [] } });
-  assert.deepEqual(plain.stored().programs, [], 'no Kairos task, no Kairos OS made');
-});
-
-/* ---- Whiteboard flow 3: a big task keeps its steps ---- */
-
-function addSteps(h, id, text) {
-  h.click(`[data-steps="${id}"]`);
-  h.$('#steps-field').value = text;
-  h.click(`[data-steps-save="${id}"]`);
-}
-const GROUP = (extra = {}) => ({ id: 'g', text: 'Change the door code', since: NOW - 4 * DAY, added: NOW - 4 * DAY,
-  steps: [{ id: 's1', text: 'find the manual' }, { id: 's2', text: 'find the codes' }, { id: 's3', text: 'set the new code' }], ...extra });
-
-test('steps typed one per line make a task a group, its steps under it; more can be added later; never on a Kairos task', () => {
-  const h = boot({ seed: { active: [{ id: 'g', text: 'Change the door code', since: NOW }],
-    backlog: [{ id: 'b', text: 'Clear the gutters' }, { id: 'k', text: 'A Kairos step', kairos: 'cccccccccc', from: 'Garden plan 3' }] } });
-  assert.equal(h.$('[data-steps="k"]'), null, 'no steps on a Kairos task');
-  assert.ok(h.$('[data-steps="b"]'), 'a backlog task can take steps too');
-  addSteps(h, 'g', '- find the manual\nfind the codes\n\nSteps:\nunderstand the steps');
-  const g = h.stored().active[0];
-  assert.deepEqual(g.steps.map(s => s.text), ['find the manual', 'find the codes', 'understand the steps']);
-  assert.ok(g.steps.every(s => s.id && !s.done));
-  assert.deepEqual(h.$$('[data-row="g"] .step .task').map(e => e.textContent.trim()), ['find the manual', 'find the codes', 'understand the steps']);
-  assert.equal(h.$('#steps-field'), null, 'the editor closes');
-  addSteps(h, 'g', 'set the new code');
-  assert.deepEqual(h.stored().active[0].steps.map(s => s.text).slice(-2), ['understand the steps', 'set the new code'], 'added at the end');
-  assert.equal(h.$('.step [data-steps]'), null, 'a step has no steps of its own');
-});
-
-test('a group takes one slot on Now, whatever its steps', () => {
-  const others = [1, 2, 3, 4, 5].map(i => ({ id: 'a' + i, text: 'T' + i, since: NOW }));
-  const h = boot({ seed: { active: [GROUP(), ...others], backlog: [{ id: 'b', text: 'Seventh' }, { id: 'c', text: 'Eighth' }] } });
-  assert.equal(h.$('#count').textContent, '6 / 7');
-  h.click('[data-push="b"]');
-  assert.equal(h.$('#count').textContent, '7 / 7');
-  assert.equal(h.$('[data-push="c"]').disabled, true);
-});
-
-test('ticking a step checks it off inside the group and restarts the five days; the group stays', () => {
-  const h = boot({ seed: { active: [GROUP()], backlog: [] } });
-  assert.equal(h.$('#active .age').textContent, '4 days');
-  h.click('[data-step-done="s1"]');
-  const g = h.stored().active[0];
-  assert.equal(g.steps[0].done, NOW);
-  assert.equal(g.since, NOW, 'the five days start over');
-  assert.equal(h.$('#active .age').textContent, 'today');
-  assert.ok(h.$('[data-step="s1"]').classList.contains('ticked'));
-  assert.equal(h.$('[data-step-done="s1"]'), null, 'a ticked step stays ticked');
-  assert.equal(h.stored().archive.length, 0);
-});
-
-test('ticking the last open step archives the group as done, with its steps; so does ticking the group', async () => {
-  const h = boot({ seed: { active: [GROUP({ steps: [{ id: 's1', text: 'find the manual', done: NOW - DAY }, { id: 's2', text: 'set the new code' }] })], backlog: [] } });
-  h.click('[data-step-done="s2"]');
-  await new Promise(r => setTimeout(r, 600));
-  let s = h.stored();
-  assert.deepEqual(s.active, []);
-  assert.equal(s.archive[0].id, 'g');
-  assert.equal(s.archive[0].done, NOW);
-  assert.deepEqual(s.archive[0].steps.map(x => x.text), ['find the manual', 'set the new code']);
-  assert.match(h.$('#archive .meta').textContent, /2 steps/);
-  const k = boot({ seed: { active: [GROUP()], backlog: [] } });
-  k.click('[data-done="g"]');
-  await new Promise(r => setTimeout(r, 600));
-  s = k.stored();
-  assert.equal(s.archive[0].id, 'g');
-  assert.equal(s.archive[0].steps.length, 3, 'its open steps go with it');
-});
-
-test('a stalled group goes back to the backlog like any task, steps and all; on the backlog its steps show without ticks', () => {
-  const h = boot({ seed: { active: [GROUP({ since: NOW - 6 * DAY, steps: [{ id: 's1', text: 'find the manual', done: NOW - 6 * DAY }, { id: 's2', text: 'set the new code' }] })], backlog: [] } });
-  const s = h.stored();
-  assert.deepEqual(s.active, []);
-  assert.deepEqual(s.backlog[0].steps.map(x => x.text), ['find the manual', 'set the new code']);
-  assert.equal(s.backlog[0].steps[0].done, NOW - 6 * DAY);
-  assert.equal(h.$$('#backlog .step').length, 2);
-  assert.equal(h.$('#backlog [data-step-done]'), null, 'steps are ticked on Now, as tasks are');
-});
-
-test('a step edits in place; empty text keeps it; nothing deletes or reorders a step', () => {
-  const h = boot({ seed: { active: [GROUP()], backlog: [] } });
-  const edit = (sid, text) => {
-    h.click(`[data-step-edit="${sid}"]`);
-    const input = h.$('input.edit');
-    input.value = text;
-    input.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  };
-  edit('s2', 'find the codes (the paper card)');
-  edit('s3', '   ');
-  assert.deepEqual(h.stored().active[0].steps.map(s => s.text), ['find the manual', 'find the codes (the paper card)', 'set the new code']);
-  assert.equal(h.$('.step button:not([data-step-done])'), null, 'no delete or move on a step');
-});
-
-test('the export carries a shared group\'s steps; a held-back group\'s steps stay out with it', () => {
-  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })),
-    active: [GROUP({ program: 'd4', steps: [{ id: 's1', text: 'find the manual', done: NOW }, { id: 's2', text: 'set the new code' }] })],
-    backlog: [{ id: 'p', text: 'PRIVATE group', program: 'd0', added: NOW, steps: [{ id: 's9', text: 'PRIVATE step' }] }],
-    archive: [{ id: 'z', text: 'old', done: NOW, steps: [{ id: 's8', text: 'ARCHIVED step', done: NOW }] }] } });
-  h.click('#export');
-  const text = h.$('#export-doc').textContent, doc = JSON.parse(text);
-  assert.deepEqual(doc.now[0].steps, [{ text: 'find the manual', ticked: true }, { text: 'set the new code', ticked: false }]);
-  assert.equal(doc.held_back, 1, 'a group counts as one');
-  for (const s of ['PRIVATE', 'ARCHIVED', 's1', 'added']) assert.ok(!text.includes(s), s);
-});
-
-test('Talk it through on a stuck group includes its steps; the ten days count from the group\'s added', async () => {
-  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })), backlog: [], active: [GROUP({ program: 'd4', added: NOW - 11 * DAY,
-    steps: [{ id: 's1', text: 'find the manual', done: NOW }, { id: 's2', text: 'set the new code' }] })] } });
-  assert.match(h.$('[data-row="g"] .stuck').textContent, /11 days on the board/, 'a ticked step does not reset the ten days');
-  h.click('[data-talk="g"]');
-  await h.tick();
-  assert.match(h.copied(), /"Change the door code" \(program: Creative Home\)\nIts steps:\n- \[x\] find the manual\n- \[ \] set the new code\n/);
-});
-
-/* ---- Whiteboard flow 4: what fits the time I have ---- */
-
-const pick = (h, sel, value) => { const s = h.$(sel); s.value = value; s.dispatchEvent(new h.w.Event('change', { bubbles: true })); };
-const faded = h => h.$$('#active [data-row].faded').map(e => e.dataset.row);
-const SIZED = () => ({ backlog: [{ id: 'b', text: 'Backlog, half a day', size: 'half' }], active: [
-  { id: 'm', text: 'Minutes', size: 'min', since: NOW },
-  { id: 'o', text: 'An hour', size: 'hour', since: NOW },
-  { id: 'h', text: 'Half a day', size: 'half', since: NOW },
-  { id: 'u', text: 'Unsized', since: NOW },
-] });
-
-test('a task on Now or the backlog takes a size under its text: minutes, an hour, half a day', () => {
-  const h = boot({ seed: { active: [{ id: 'a', text: 'Fix the gate latch', since: NOW }], backlog: [{ id: 'b', text: 'Clear the gutters' }] } });
-  assert.deepEqual([...h.$('[data-size="a"]').options].map(o => o.textContent), ['no size', 'minutes', 'an hour', 'half a day']);
-  assert.ok(h.$('[data-size="b"]'), 'the backlog too');
-  pick(h, '[data-size="a"]', 'hour');
-  assert.equal(h.stored().active[0].size, 'hour');
-  assert.ok(h.$('[data-size="a"]').classList.contains('set'));
-  pick(h, '[data-size="a"]', '');
-  assert.equal(h.stored().active[0].size, undefined, 'and back to no size');
-});
-
-test('the I have bar fades what on Now doesn\'t fit; unsized always shows; tap it again and all show', () => {
-  const h = boot({ seed: SIZED() });
-  assert.deepEqual(h.$$('#have [data-have]').map(b => b.textContent), ['15 min', '1 h', 'more']);
-  assert.deepEqual(faded(h), []);
-  h.click('[data-have="15"]');
-  assert.deepEqual(faded(h), ['o', 'h']);
-  assert.ok(h.$('[data-have="15"]').classList.contains('on'));
-  assert.equal(h.$('#backlog .faded'), null, 'Now only');
-  assert.equal(h.$('[data-done="h"]').disabled, false, 'a faded task is still there and tappable');
-  h.click('[data-have="60"]');
-  assert.deepEqual(faded(h), ['h']);
-  h.click('[data-have="more"]');
-  assert.deepEqual(faded(h), []);
-  h.click('[data-have="60"]');
-  h.click('[data-have="60"]');
-  assert.deepEqual(faded(h), [], 'tapped again: all show');
-  assert.equal(h.$('#have .on'), null);
-});
-
-test('the bar\'s choice is forgotten when the app closes; it is never saved', () => {
-  const h = boot({ seed: SIZED() });
-  h.click('[data-have="15"]');
-  pick(h, '[data-size="u"]', 'min');   // a save while the bar is set
-  const raw = h.w.localStorage.getItem(KEY);
-  assert.ok(!raw.includes('have'));
-  const again = boot({ seed: JSON.parse(raw) });
-  assert.deepEqual(faded(again), []);
-  assert.equal(again.$('#have .on'), null);
-});
-
-test('a group fits by its next open step\'s size, or its own when that step has none; a step takes a size too', () => {
-  const steps = [{ id: 's1', text: 'find the manual', size: 'half', done: NOW }, { id: 's2', text: 'find the codes', size: 'min' }, { id: 's3', text: 'set the new code' }];
-  const h = boot({ seed: { backlog: [], active: [
-    { id: 'g', text: 'Change the door code', size: 'half', since: NOW, steps },
-    { id: 'k', text: 'Paint the shed', size: 'half', since: NOW, steps: [{ id: 't1', text: 'buy paint' }] },
-  ] } });
-  h.click('[data-have="15"]');
-  assert.deepEqual(faded(h), ['k'], 'g by its next step (minutes); k by its own size');
-  assert.deepEqual([...h.$('[data-step-size="s3"]').options].map(o => o.textContent), ['no size', 'minutes', 'an hour', 'half a day']);
-  pick(h, '[data-step-size="t1"]', 'min');
-  assert.equal(h.stored().active[1].steps[0].size, 'min');
-  assert.deepEqual(faded(h), [], 'the bar holds through the change');
-  h.click('[data-step-done="s2"]');
-  assert.deepEqual(faded(h), ['g'], 'the next open step is unsized: the group\'s own size counts');
-});
-
-test('a task sized half a day offers steps', () => {
-  const h = boot({ seed: { backlog: [], active: [
-    { id: 'h', text: 'Half a day', size: 'half', since: NOW },
-    { id: 'o', text: 'An hour', size: 'hour', since: NOW },
-    { id: 'g', text: 'A group', size: 'half', since: NOW, steps: [{ id: 's1', text: 'one' }] },
-  ] } });
-  assert.ok(h.$('[data-steps="h"]').classList.contains('offer'));
-  assert.match(h.$('[data-steps="h"]').textContent, /break into steps/);
-  assert.ok(!h.$('[data-steps="o"]').classList.contains('offer'));
-  assert.ok(!h.$('[data-steps="g"]').classList.contains('offer'), 'already a group');
-});
-
-test('a size is not in the export', () => {
-  const h = boot({ seed: { programs: PROGRAMS.map(p => ({ ...p })), backlog: [{ id: 'b', text: 'Shared', program: 'd4', size: 'hour' }],
-    active: [{ id: 'g', text: 'Group', program: 'd4', size: 'half', since: NOW, steps: [{ id: 's1', text: 'one', size: 'min' }] }] } });
-  h.click('#export');
-  const text = h.$('#export-doc').textContent;
-  for (const s of ['size', 'half', 'hour', '"min']) assert.ok(!text.includes(s), s);
+test('the page may reach its own address only: no api.github.com, no fetch in the page', () => {
+  const csp = HTML.match(/Content-Security-Policy" content="([^"]+)"/)[1];
+  assert.match(csp, /connect-src 'self';/);
+  assert.doesNotMatch(HTML, /api\.github\.com|fetch\(/);
 });

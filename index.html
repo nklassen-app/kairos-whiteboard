@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<!-- Charter v1.6 (Pace 6): the page may reach its own address and one other,
-     api.github.com, for the Kairos door below. Any other host is refused. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self' https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<!-- The page may reach its own address only (v18, 2026-11-15: the Kairos door
+     to GitHub, Charter v1.6, is closed). Any other host is refused. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#f6f7f5">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -142,44 +142,34 @@
   .ver{position:fixed;right:10px;bottom:8px;font-size:11px;color:var(--graphite);opacity:.6;}
   .saving{font-size:12px;color:var(--graphite);}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
+  .label{display:block;font-size:12px;color:var(--graphite);margin-top:3px;}
+  .ice{flex:none;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>Whiteboard</h1>
-    <span class="count" id="count"></span>
   </header>
 
-  <section>
-    <h2>Now</h2>
-    <div class="have" id="have">I have <button type="button" data-have="15">15 min</button><button type="button" data-have="60">1 h</button><button type="button" data-have="more">more</button></div>
-    <div class="board" id="active"></div>
-  </section>
-
-  <section class="kairos">
-    <h2>Kairos</h2>
-    <p class="note" id="kairos-note"></p>
-    <details id="kairos-connect">
-      <summary>Connect to Kairos</summary>
-      <p class="note">Paste a fine-grained GitHub token: only <b>kairos_v3</b>, Issues read and write, 90 days. It stays on this phone and is never exported.</p>
-      <div class="capture" style="margin-top:8px">
-        <input id="kairos-token" type="password" placeholder="github_pat_…" autocomplete="off">
-        <button class="add" id="kairos-save" type="button">Connect</button>
-      </div>
-    </details>
-  </section>
-
   <section class="backlog">
-    <h2>Backlog</h2>
     <div class="capture">
       <input id="field" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
       <button class="add" id="add" type="button">Add</button>
     </div>
     <div id="field-prog-slot"></div>
-    <div id="backlog"></div>
     <p class="note" id="status"></p>
   </section>
+
+  <section>
+    <h2>Ready</h2>
+    <div class="board" id="ready"></div>
+  </section>
+
+  <details class="archive" id="icebox-box">
+    <summary id="icebox-head">Icebox</summary>
+    <div id="icebox"></div>
+  </details>
 
   <details class="archive" id="archive-box">
     <summary id="archive-head">Archive</summary>
@@ -194,237 +184,115 @@
     </div>
     <div id="programs"></div>
   </details>
-
-  <section class="export">
-    <button class="add" id="export" type="button">Export for agent</button>
-    <div id="export-box" hidden>
-      <h2 style="margin-top:14px">This is what leaves the phone</h2>
-      <p class="note" id="export-note"></p>
-      <pre class="xdoc" id="export-doc"></pre>
-      <div class="btns"><button class="add" id="export-copy" type="button">Copy</button><button class="copy" id="export-close" type="button">Close</button></div>
-    </div>
-  </section>
 </div>
 <!-- Keep in step with CACHE in sw.js — the visible proof of which build is running. -->
-<span class="ver">whiteboard-v17</span>
+<span class="ver">whiteboard-v18</span>
 
 <script>
+// Whiteboard v18 (N., 2026-11-15): Ready and a hidden Icebox, nothing more.
+// Six weeks showed the board works as a passive menu, opened briefly on the
+// phone: it remembers tasks and lets me pick. Now, its cap, the time chips,
+// sizes, ages, copy, Talk it through, blocked, let go, the export and the
+// Kairos sync are gone from the screen; their stored fields stay on the
+// tasks, unread, so the v17 backup (below) can bring them back.
 const KEY = 'whiteboard:v1';
-// archive: ticked tasks, newest first, each with `done` (epoch ms).
-// programs: the short list typed on the phone ({id, name}); a task names one
-// by `program` (its id). A new board starts with an empty list.
-// (no `programs` key until load() decides: absent means "never had a list")
-let state = { active: [], backlog: [], archive: [] };
-// The program list is mine, kept on the phone: the programs I do Whiteboard
-// tasks for, picked from the one program list (kairos-system/programs.md, in
-// the private repo) and matched to it by name only, never by code (N.,
-// 2026-10-24). No list ships in this repo; boards seeded before then keep
-// their d0-d10 ids, which the export's SHARED filter below still reads.
+const BACKUP = 'whiteboard:v17-backup';         // the v17 board, as it was, before v18 first moved anything
+const TOKEN_KEY = 'whiteboard:kairos-token';    // the old GitHub token: deleted, the door is closed
+// ready, icebox: open tasks, newest first. archive: ticked (or let go in v17),
+// newest first, each with `done`. programs: {id, name}. offBoard: the open
+// Kairos steps v17 had brought in, kept out of sight. active, backlog: v17's
+// lists, empty since the move.
+let state = { ready: [], icebox: [], archive: [], programs: [] };
 
 const $ = id => document.getElementById(id);
 const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const openCount = () => state.active.length;
-// How long a task has been on Now: `since` (epoch ms) is set when it is
-// pushed up. Tasks that were on Now before there was a `since` get stamped
-// at their first load after the update — the earliest moment known.
-// Counted in calendar days, not elapsed hours: a task pushed up at 8pm is
-// on Now for a second calendar day the moment the clock crosses midnight,
-// not 24 hours later. (Math.round rather than a plain subtract/DAY so a
-// DST shift, which makes a local day worth 23 or 25 real hours, doesn't
-// push the count off by one.)
-const DAY = 86400000;
-const daysSince = ms => {
-  const since = new Date(ms), now = new Date();
-  const sinceMidnight = new Date(since.getFullYear(), since.getMonth(), since.getDate()).getTime();
-  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return Math.round((nowMidnight - sinceMidnight) / DAY);
-};
-const daysOn = t => t.since ? daysSince(t.since) : null;
-const age = t => { const d = daysOn(t); return d == null ? '' : d <= 0 ? 'today' : d === 1 ? '1 day' : d + ' days'; };
-
-// Nothing stays on Now longer than five days (N., 2026-10-30): a task can
-// show "5 days" at most; at the midnight that would make it six, it goes
-// back to the top of the backlog by itself, its Now stamp cleared. Run at
-// every open and every return to the app — the only moments the count moves
-// for N.
-const MAX_DAYS = 5;
-function sendBackStale(){
-  const stale = state.active.filter(t => daysOn(t) > MAX_DAYS);
-  if (!stale.length) return 0;
-  state.active = state.active.filter(t => !stale.includes(t));
-  for (const t of stale) delete t.since;
-  state.backlog.unshift(...stale);
-  return stale.length;
-}
-function sweepNow(){
-  const n = sendBackStale();
-  if (!n) return;
-  render(); save();
-  $('status').textContent = `${n === 1 ? '1 task' : n + ' tasks'} back from Now after ${MAX_DAYS} days.`;
-}
-
-// A task on the board longer than ten days, Now or backlog, is stuck
-// (Whiteboard flow 2, N., 2026-10-30): its row offers to talk it through
-// with Claude, to mark it blocked, or to let it go. `added` is stamped when
-// a task joins the board (tasks from before then: at their first load
-// after the update); "blocked" stamps `paused`, which starts the ten days
-// over. Neither stamp is ever exported.
-const STUCK_DAYS = 10;
-const onBoard = t => daysSince(t.paused || t.added);
-const stuck = t => t.added && onBoard(t) > STUCK_DAYS;
-
-async function load(){
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) state = JSON.parse(raw);
-  } catch (e) {
-    $('status').textContent = 'Starting a fresh board.';
-  }
-  if (!Array.isArray(state.active)) state.active = [];
-  if (!Array.isArray(state.backlog)) state.backlog = [];
-  if (!Array.isArray(state.archive)) state.archive = [];
-  let seeded = false;
-  if (!Array.isArray(state.programs)){
-    state.programs = [];
-    seeded = true;
-  }
-  let stamped = false;
-  for (const t of state.active) if (!t.since){ t.since = Date.now(); stamped = true; }
-  for (const t of state.active.concat(state.backlog)) if (!t.added){ t.added = Date.now(); stamped = true; }
-  const back = sendBackStale();
-  const tagged = tagKairos();
-  render();
-  if (stamped || seeded || back || tagged) save();
-  if (back) $('status').textContent = `${back === 1 ? '1 task' : back + ' tasks'} back from Now after ${MAX_DAYS} days.`;
-}
-
-async function save(){
-  try {
-    localStorage.setItem(KEY, JSON.stringify(state));
-    $('status').textContent = '';
-  } catch (e) {
-    $('status').textContent = 'Not saved — this browser is blocking storage.';
-  }
-}
-
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-// Every task from GitHub (the Kairos dashboard) is under Kairos OS
-// (Whiteboard flow 6, N., 2026-11-08): matched by name, any case, as the
-// program list is (rule 9), and added to the list the first time it is
-// needed. Only where the task has no program: one N. picked stays.
-const KAIROS_PROGRAM = 'Kairos OS';
-function tagKairos(){
-  const untagged = [...state.active, ...state.backlog, ...state.archive].filter(t => t.kairos && !t.program);
-  if (!untagged.length) return 0;
-  let p = state.programs.find(x => x.name.toLowerCase() === KAIROS_PROGRAM.toLowerCase());
-  if (!p){ p = { id: newId(), name: KAIROS_PROGRAM }; state.programs.push(p); }
-  for (const t of untagged) t.program = p.id;
-  return untagged.length;
-}
+const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const programName = id => (state.programs.find(p => p.id === id) || {}).name || '';
+const hasSteps = t => Array.isArray(t.steps) && t.steps.length > 0;
+const TICK = '<svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>';
 // The day a task was ticked: "3 Oct", with the year once it is not this year's.
 const doneDay = ms => {
   const d = new Date(ms), opts = { day: 'numeric', month: 'short' };
   if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
   return d.toLocaleDateString('en-GB', opts);
 };
-// The program picker under a task's text — only once there is a program list.
-function picker(t){
-  if (!state.programs.length) return '';
-  const opts = state.programs.map(p => `<option value="${p.id}" ${t.program === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-  return `<select class="prog${t.program ? ' set' : ''}" data-prog="${t.id}" aria-label="Program for ${esc(t.text)}"><option value="">no program</option>${opts}</select>`;
+
+// The move to v18, once: the v17 board is backed up unchanged on the phone,
+// then every open task I added goes to the Icebox (blocked ones too) and
+// Ready starts empty; open Kairos steps leave the board into offBoard; the
+// archive stays as it is. Nothing of the board leaves the phone.
+function migrate(raw){
+  if (raw && !localStorage.getItem(BACKUP)) localStorage.setItem(BACKUP, raw);
+  const open = (state.active || []).concat(state.backlog || []);
+  const mine = open.filter(t => !t.kairos), kairos = open.filter(t => t.kairos);
+  state.icebox = mine.concat(state.icebox || []);
+  state.offBoard = (state.offBoard || []).concat(kairos);
+  state.ready = state.ready || [];
+  state.active = [];
+  state.backlog = [];
+  state.v = 18;
+  return open.length ? `Whiteboard v18: ${plural(mine.length, 'task')} to the Icebox; ${plural(kairos.length, 'Kairos task')} taken off the board.` : '';
 }
 
-// A stuck task's bar: how long, and what to do about it. Talk it through
-// only where the task may reach Claude (talkable); let go never on a Kairos
-// step — that one is decided in the backlog, in a session.
-const stuckBar = t => !stuck(t) ? '' : `<span class="stuck">${onBoard(t)} days on the board`
-  + (talkable(t) ? ` <button class="copy talk" data-talk="${t.id}">Talk it through</button>` : '')
-  + ` <button class="copy" data-blocked="${t.id}">blocked</button>`
-  + (t.kairos ? '' : ` <button class="copy" data-letgo="${t.id}">let go</button>`) + '</span>';
+function load(){
+  let raw = null, note = '';
+  try {
+    raw = localStorage.getItem(KEY);
+    if (raw) state = JSON.parse(raw);
+  } catch (e) {
+    note = 'Starting a fresh board.';
+  }
+  for (const k of ['ready', 'icebox', 'archive']) if (!Array.isArray(state[k])) state[k] = [];
+  if (!Array.isArray(state.programs)) state.programs = [];
+  let changed = !raw;
+  if (state.v !== 18){ note = migrate(raw) || note; changed = true; }
+  try { if (localStorage.getItem(TOKEN_KEY) != null) localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+  render();
+  if (changed) save();
+  $('status').textContent = note;
+}
 
-// A task that came from the Kairos dashboard says where, under its text.
-const from = t => t.kairos ? `<span class="from">Kairos · ${esc(t.from || '')}</span>` : '';
+function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch (e) {
+    $('status').textContent = 'Not saved — this browser is blocking storage.';
+  }
+}
 
-// A group (Whiteboard flow 3, N., 2026-11-08): a big task keeps its steps
-// under it, one level deep, as one unit — one slot on Now. Steps are added
-// one per line (cleaned like a pasted list), edited in place, never deleted
-// or reordered. On Now each open step has its own tick: a ticked step stays
-// in the group, struck through, and restarts the five days (`since`); the
-// last one archives the group as done, steps and all. Not on a Kairos task,
-// which mirrors the dashboard.
-let stepsOpen = null;   // the task whose steps editor is open
-const TICK = '<svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>';
-const hasSteps = t => Array.isArray(t.steps) && t.steps.length > 0;
-// What fits the time I have (Whiteboard flow 4, N., 2026-11-08): a task or
-// a step can carry a size; the I have bar above Now fades every task on
-// Now that doesn't fit, still there and tappable. A group fits by its next
-// open step's size, or its own when that step has none; an unsized task
-// always fits. The bar's choice lives only in memory: it describes this
-// moment, not the task, so it is never saved. A size is never exported.
-const SIZES = [['min', 'minutes', 15], ['hour', 'an hour', 60], ['half', 'half a day', 240]];
-const HAVE = { '15': 15, '60': 60, more: Infinity };
-let have = null;
-const minutes = sz => (SIZES.find(x => x[0] === sz) || [])[2];
-const sizeOf = t => { const next = hasSteps(t) && t.steps.find(s => !s.done); return (next && next.size) || t.size; };
-const fits = t => !have || !sizeOf(t) || minutes(sizeOf(t)) <= HAVE[have];
-const sizeOpts = cur => '<option value="">no size</option>' + SIZES.map(([v, label]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${label}</option>`).join('');
-const sizePicker = t => `<select class="prog${t.size ? ' set' : ''}" data-size="${t.id}" aria-label="Size of ${esc(t.text)}">${sizeOpts(t.size)}</select>`;
-const pickers = t => `<div class="pickers">${picker(t)}${sizePicker(t)}${stepsTool(t)}</div>`;
-
-const stepsOf = (t, tickable) => !hasSteps(t) ? '' : `<div class="steps">${t.steps.map(s => `
-  <div class="step${s.done ? ' ticked' : ''}" data-step="${s.id}">${tickable && !s.done
-    ? `<button class="box" data-step-done="${s.id}" aria-label="Tick ${esc(s.text)}">${TICK}</button>`
-    : `<span class="mark">${s.done ? TICK : ''}</span>`}<span class="task" data-step-edit="${s.id}">${esc(s.text)}</span><select class="prog size${s.size ? ' set' : ''}" data-step-size="${s.id}" aria-label="Size of ${esc(s.text)}">${sizeOpts(s.size)}</select></div>`).join('')}</div>`;
-const stepsTool = t => t.kairos ? ''
-  : stepsOpen === t.id
-    ? `<div class="steps-edit"><textarea id="steps-field" rows="3" placeholder="One step per line" aria-label="Steps for ${esc(t.text)}"></textarea><button class="add" data-steps-save="${t.id}" type="button">Add</button></div>`
-    : hasSteps(t) ? `<button class="copy grow" data-steps="${t.id}">+ steps</button>`
-    // A task sized half a day offers steps (Whiteboard flow 4).
-    : t.size === 'half' ? `<button class="copy grow offer" data-steps="${t.id}">break into steps</button>`
-    : `<button class="copy grow" data-steps="${t.id}">steps</button>`;
-const stepLines = t => hasSteps(t) ? '\nIts steps:\n' + t.steps.map(s => `- [${s.done ? 'x' : ' '}] ${s.text}`).join('\n') : '';
+const label = t => t.program && programName(t.program) ? `<span class="label">${esc(programName(t.program))}</span>` : '';
+const stepsOf = t => !hasSteps(t) ? '' : `<div class="steps">${t.steps.map(s => `
+  <div class="step${s.done ? ' ticked' : ''}"><span class="mark">${s.done ? TICK : ''}</span><span class="task">${esc(s.text)}</span></div>`).join('')}</div>`;
 
 function render(){
-  const n = openCount();
-  const draft = $('steps-field') ? $('steps-field').value : '';
-  const c = $('count');
-  c.textContent = n + ' / 7';
-  c.classList.toggle('full', n >= 7);
-
-  for (const b of document.querySelectorAll('[data-have]')) b.classList.toggle('on', b.dataset.have === have);
-  const a = $('active');
-  if (!state.active.length){
-    a.className = 'board empty';
-    a.textContent = 'Nothing here. Push something up from the backlog.';
+  const r = $('ready');
+  if (!state.ready.length){
+    r.className = 'board empty';
+    r.textContent = 'Nothing ready. Move something up from the Icebox.';
   } else {
-    a.className = 'board';
-    a.innerHTML = state.active.map(t => `
-      <div class="row${fits(t) ? '' : ' faded'}" data-row="${t.id}">
-        <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">
-          <svg viewBox="0 0 29 29"><path d="M7 15.2 12.2 20.4 22 9.4"/></svg>
-        </button>
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, true)}${pickers(t)}${stuckBar(t)}</div>
-        <span class="age" data-age="${t.id}">${age(t)}</span>
-        <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
+    r.className = 'board';
+    r.innerHTML = state.ready.map(t => `
+      <div class="row" data-row="${t.id}">
+        <button class="box" data-done="${t.id}" aria-label="Complete ${esc(t.text)}">${TICK}</button>
+        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${stepsOf(t)}${label(t)}</div>
+        <button class="copy ice" data-ice="${t.id}" aria-label="Move ${esc(t.text)} to the Icebox">Icebox</button>
       </div>`).join('');
   }
 
-  // The picker under "Add a task" (Whiteboard flow 6): a new task takes its
-  // program as it is typed. Its choice survives a re-render; add() clears it.
+  // The picker beside "Add a task": a new task takes its program as it is typed.
   const slot = $('field-prog-slot'), was = $('field-prog') ? $('field-prog').value : '';
   slot.innerHTML = state.programs.length
     ? `<select class="prog" id="field-prog" aria-label="Program for the new task"><option value="">no program</option>${state.programs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>`
     : '';
   if ($('field-prog') && state.programs.some(p => p.id === was)) $('field-prog').value = was;
 
-  const b = $('backlog');
-  b.innerHTML = state.backlog.length
-    ? state.backlog.map(t => `
+  $('icebox-head').textContent = `Icebox · ${state.icebox.length}`;
+  $('icebox').innerHTML = state.icebox.length
+    ? state.icebox.map(t => `
       <div class="row" data-row="${t.id}">
-        <div class="body"><span class="task" data-edit="${t.id}">${esc(t.text)}</span>${from(t)}${stepsOf(t, false)}${pickers(t)}${stuckBar(t)}</div>
-        <button class="copy" data-copy="${t.id}" aria-label="Copy ${esc(t.text)}">copy</button>
-        <button class="push" data-push="${t.id}" ${n >= 7 ? 'disabled' : ''}>Now</button>
+        <span class="task">${esc(t.text)}${label(t)}</span>
+        <button class="push" data-unice="${t.id}" aria-label="Move ${esc(t.text)} to Ready">Ready</button>
       </div>`).join('')
     : '<p class="note">Empty.</p>';
 
@@ -441,283 +309,6 @@ function render(){
     ? state.programs.map(p => `
       <div class="row"><span class="task" data-prog-edit="${p.id}">${esc(p.name)}</span></div>`).join('')
     : '<p class="note">None yet. Add the programs you do Whiteboard tasks for.</p>';
-  if ($('steps-field')){ $('steps-field').value = draft; }
-  renderExport();
-}
-
-/* ---- Kairos (Pace 6, Charter v1.6): the dashboard issue, read on the phone ---- */
-
-// The Whiteboard's one outbound door. kairosDoor() is the only network call
-// in this page, and it reaches exactly one address: issue #11 of
-// nklassen-app/kairos_v3, the dashboard. The CSP in <head> refuses any other
-// host. It reads the issue, and writes back only the issue's own body with
-// one checkbox ticked (tickInIssue checks that nothing else changed) —
-// nothing of the board is ever sent. The token sits under its own key,
-// outside the board's document, so no export or copy can carry it.
-//
-// The sync, on every open of the app: first the ticks waiting to be sent,
-// then a read. A ready step that is not on the board yet lands on the
-// backlog as an ordinary task (`kairos`: its key, `from`: its story). A
-// step ticked in the issue goes to the archive; a step gone from the issue
-// (Claude applied the tick, or reworded it) leaves Now and the backlog.
-const TOKEN_KEY = 'whiteboard:kairos-token';   // { token, since }
-const KAIROS_KEY = 'whiteboard:kairos';         // { at }: the last good sync
-const TICKS_KEY = 'whiteboard:kairos-ticks';    // keys ticked here, not yet in the issue
-const ISSUE = 'https://api.github.com/repos/nklassen-app/kairos_v3/issues/11';
-const TOKEN_DAYS = 90, WARN_DAYS = 30;
-
-const readKey = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
-const writeKey = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-const pendingTicks = () => readKey(TICKS_KEY) || [];
-
-async function kairosDoor(token, body){
-  const res = await fetch(ISSUE, { method: body == null ? 'GET' : 'PATCH', cache: 'no-store', headers: {
-    Authorization: 'Bearer ' + token,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    ...(body == null ? {} : { 'Content-Type': 'application/json' }),
-  }, ...(body == null ? {} : { body: JSON.stringify({ body }) }) });
-  if (!res.ok){ const err = new Error('refused'); err.status = res.status; throw err; }
-  return (await res.json()).body || '';
-}
-
-// The dashboard's own lines (dashboard.py): an epic line "**Epic** — …" and
-// N.'s steps "- [ ] Story · task <!-- k:… -->". Open steps are tasks; the
-// keys of ticked ones are noted; the "Recently done" list and everything
-// else are skipped. A body without the dashboard's marker reads as null, so
-// a wrong answer can never empty the board.
-function kairosTasks(body){
-  if (!body.includes('<!-- kairos-dashboard')) return null;
-  const tasks = [], ticked = [];
-  let epic = '';
-  for (const line of body.split(/\r?\n/)){
-    if (line.startsWith('### Recently done')) break;
-    const e = line.match(/^\*\*(.+?)\*\* — /);
-    if (e){ epic = e[1]; continue; }
-    const m = line.match(/^- \[([ xX])\] (.*?)\s*<!-- k:([0-9a-f]{10}) -->\s*$/);
-    if (!m) continue;
-    if (m[1] !== ' '){ ticked.push(m[3]); continue; }
-    const plain = m[2].replace(/\*\*|`/g, '').trim();
-    const s = plain.match(/^(.+? \d+[a-z]?|On trial) · (.*)$/);
-    tasks.push({ key: m[3], epic, story: s ? s[1] : '', text: s ? s[2] : plain });
-  }
-  return { tasks, ticked };
-}
-
-// The issue's body with the one box for `key` ticked, or null when that box
-// is not open there (already ticked, or gone). Exactly one line changes.
-function tickInIssue(body, key){
-  const lines = body.split('\n');
-  const i = lines.findIndex(l => /^- \[ \] /.test(l) && l.includes(`<!-- k:${key} -->`));
-  if (i < 0) return null;
-  lines[i] = lines[i].replace('- [ ] ', '- [x] ');
-  return lines.join('\n');
-}
-
-// Bring the board in step with the issue's steps (see the top of this block).
-function kairosMerge({ tasks, ticked }){
-  const open = new Map(tasks.map(t => [t.key, t]));
-  const done = new Set(ticked), waiting = new Set(pendingTicks());
-  const known = new Set([...state.active, ...state.backlog, ...state.archive].map(t => t.kairos).filter(Boolean));
-  let left = 0;
-  for (const list of [state.active, state.backlog]){
-    for (let i = list.length - 1; i >= 0; i--){
-      const t = list[i];
-      if (!t.kairos || open.has(t.kairos) || waiting.has(t.kairos)) continue;
-      list.splice(i, 1);
-      left++;
-      if (done.has(t.kairos)){ delete t.since; t.done = Date.now(); state.archive.unshift(t); }
-    }
-  }
-  // New steps go on top of the backlog, in the issue's order.
-  const fresh = tasks.filter(t => !known.has(t.key))
-    .map(t => ({ id: newId(), text: t.text, kairos: t.key, from: t.story && t.story !== 'On trial' ? t.story : t.epic, added: Date.now() }));
-  state.backlog.unshift(...fresh);
-  tagKairos();
-  return { added: fresh.length, left };
-}
-
-const clock = ms => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-const sinceDays = ms => Math.floor((Date.now() - ms) / DAY);
-const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
-
-// One sync at a time; a call during one (a tick, a return to the app) runs
-// once more right after it.
-let syncing = false, again = false;
-async function kairosRefresh(){
-  const t = readKey(TOKEN_KEY);
-  if (!t || !t.token){
-    $('kairos-connect').open = true;
-    $('kairos-note').textContent = 'Not connected. Your Kairos tasks land on the backlog once this phone holds a token.';
-    return;
-  }
-  if (syncing){ again = true; return; }
-  syncing = true;
-  const left = TOKEN_DAYS - sinceDays(t.since);
-  const expiry = left <= 0 ? ' The token may have run out: make a new one (90 days) and connect again.'
-    : left <= WARN_DAYS ? ` The token runs out in ${left} day${left === 1 ? '' : 's'}: make a new one and connect again.` : '';
-  try {
-    // Ticks first, one box per write, each on a fresh read of the issue.
-    for (const key of pendingTicks()){
-      const ticked = tickInIssue(await kairosDoor(t.token), key);
-      if (ticked != null) await kairosDoor(t.token, ticked);
-      writeKey(TICKS_KEY, pendingTicks().filter(k => k !== key));
-    }
-    const read = kairosTasks(await kairosDoor(t.token));
-    if (!read) throw new Error('not the dashboard');
-    const { added, left: gone } = kairosMerge(read);
-    writeKey(KAIROS_KEY, { at: Date.now() });
-    if (added || gone){ render(); save(); }
-    const news = [added && `${plural(added, 'new task')} on the backlog`, gone && `${plural(gone, 'task')} done or changed in Kairos, taken off`].filter(Boolean).join('; ');
-    $('kairos-note').textContent = (`Synced ${clock(Date.now())}.` + (news ? ` ${news}.` : '') + expiry);
-  } catch (err){
-    const last = readKey(KAIROS_KEY), wait = pendingTicks().length;
-    if (err.status === 401){
-      $('kairos-connect').open = true;
-      $('kairos-note').textContent = 'GitHub refused the token: it has run out or was revoked. Make a new one (90 days) and connect again.';
-    } else if (err.status === 403 || err.status === 404){
-      $('kairos-connect').open = true;
-      $('kairos-note').textContent = `GitHub refused (${err.status}): the token needs kairos_v3 with Issues read and write. Make one that has both and connect again.`
-        + (wait ? ` ${plural(wait, 'tick')} will be sent then.` : '');
-    } else {
-      $('kairos-note').textContent = 'Could not reach GitHub.' + (last && last.at ? ` Last synced ${doneDay(last.at)}, ${clock(last.at)}.` : '')
-        + (wait ? ` ${plural(wait, 'tick')} will be sent next time.` : '') + expiry;
-    }
-  } finally {
-    syncing = false;
-    if (again){ again = false; kairosRefresh(); }
-  }
-}
-
-function kairosConnect(){
-  const token = $('kairos-token').value.trim();
-  if (!/^github_pat_\w+$/.test(token)){
-    $('kairos-note').textContent = 'That is not a fine-grained token: they start with github_pat_.';
-    return;
-  }
-  writeKey(TOKEN_KEY, { token, since: Date.now() });
-  $('kairos-token').value = '';
-  $('kairos-connect').open = false;
-  kairosRefresh();
-}
-
-/* ---- Export for agent (Agent design 5): the one door for what an agent gets, copied by hand ---- */
-
-// Everything that leaves the Whiteboard for an agent is built here, from an
-// allow-list. In: the text and program name of each task on Now (with its
-// days there) and on the backlog, and two counts — tasks ticked off this
-// week, and tasks held back. Only tasks under a program in SHARED cross;
-// everything else is held back and only counted: the health, family and
-// school programs from the old seed list (d0, d1, d2, d5, d10 — Crown jewels,
-// N., 2026-10-19), any
-// program added later (until N. allows it), and tasks with no program
-// (N., 2026-10-20). By id, so a renamed program keeps its class. Out,
-// always: the archive's text, ids and timestamps. Nothing goes over the
-// network — the panel shows the document and N. copies it by hand.
-const SHARED = new Set(['d3', 'd4', 'd6', 'd7', 'd8', 'd9']);
-let exportOpen = false;
-function agentExport(){
-  const now = new Date();
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7).getTime();
-  const shared = t => SHARED.has(t.program);
-  // A group's steps go with it, under its program's rule (Whiteboard flow 3).
-  const steps = t => hasSteps(t) ? { steps: t.steps.map(s => ({ text: s.text, ticked: !!s.done })) } : {};
-  const all = state.active.concat(state.backlog);
-  return {
-    app: 'whiteboard',
-    exported: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-    about: 'N.\'s own tasks. now: on the Now list (at most seven), with days there; next: the backlog. held_back: tasks under private programs, left out on purpose.',
-    now: state.active.filter(shared).map(t => ({ text: t.text, program: programName(t.program), days_on_now: daysOn(t), ...steps(t) })),
-    next: state.backlog.filter(shared).map(t => ({ text: t.text, program: programName(t.program), ...steps(t) })),
-    done_this_week: state.archive.filter(t => t.done >= monday && !t.letGo).length,
-    held_back: all.filter(t => !shared(t)).length,
-  };
-}
-const agentText = () => JSON.stringify(agentExport(), null, 2) + '\n';
-function renderExport(){
-  $('export-box').hidden = !exportOpen;
-  $('export').hidden = exportOpen;
-  if (!exportOpen) return;
-  const x = agentExport();
-  $('export-note').textContent = `Tasks on Now and the backlog under your shared programs. ${x.held_back} held back (private programs, or no program); the archive's text stays here.`;
-  $('export-doc').textContent = agentText();
-}
-function copyExport(){
-  const text = agentText();
-  const btn = $('export-copy');
-  const did = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
-  clip(text, did, () => { $('export-note').textContent = 'Could not copy — select the text and copy it by hand.'; });
-}
-
-/* ---- Talk it through (Whiteboard flow 2): a stuck task, copied into Claude by hand ---- */
-
-// What may reach Claude is the export's allow-list — tasks under a SHARED
-// program — plus Kairos steps, which come from GitHub already (N.,
-// 2026-10-30). Everything else gets the marker but no button: no copy of
-// its text is ever made here. The prompt carries the task's text, its
-// program's name or Kairos story, and how long it has sat; nothing else of
-// the board. No network call: N. pastes it into Claude.
-const talkable = t => SHARED.has(t.program) || !!t.kairos;
-function talkText(t){
-  const where = state.active.includes(t) ? 'on my Now list' : 'in my backlog';
-  const tag = t.kairos ? ` (Kairos · ${t.from || 'a step'})` : ` (program: ${programName(t.program)})`;
-  return `This task has sat on my Whiteboard for ${onBoard(t)} days, now ${where}:
-"${t.text}"${tag}${stepLines(t)}
-
-Help me find out why it isn't moving. Ask me one short question at a time.
-First find which it is: blocked by something outside me, too big, unclear,
-not really mine to do, or something I don't actually want.
-Then help me with one move: break it into small steps (the first one doable
-in 15 minutes), delegate it (to whom, with the message drafted), reword it
-so it is something I'd start, or let it go. If it is blocked, that is fine:
-say so and stop.
-
-End with the result as plain lines I can paste into my Whiteboard: one task
-per line, no headings, no numbering.
-`;
-}
-
-// One clipboard helper: the Clipboard API first, a textarea fallback for
-// WebViews without it.
-function clip(text, did, fail){
-  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(did, fail); return; }
-  const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
-  let ok = false; try { ok = document.execCommand && document.execCommand('copy'); } catch (e) {}
-  ta.remove(); (ok ? did : fail)();
-}
-
-function talk(id, btn){
-  const t = findTask(id);
-  if (!t || !talkable(t)) return;
-  clip(talkText(t), () => {
-    btn.textContent = 'copied — paste into Claude'; btn.classList.add('did');
-    setTimeout(() => { btn.textContent = 'Talk it through'; btn.classList.remove('did'); }, 2000);
-  }, () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; });
-}
-
-// Blocked: fine. The marker goes quiet and the ten days start over.
-function block(id){
-  const t = findTask(id);
-  if (!t) return;
-  t.paused = Date.now();
-  render(); save();
-}
-
-// Let go: off the board into the archive, marked so — kept on record,
-// never counted as done. Not for Kairos steps.
-function letGo(id){
-  for (const list of [state.active, state.backlog]){
-    const i = list.findIndex(t => t.id === id);
-    if (i < 0 || list[i].kairos) continue;
-    const [t] = list.splice(i, 1);
-    delete t.since;
-    t.done = Date.now();
-    t.letGo = true;
-    state.archive.unshift(t);
-    render(); save();
-    $('status').textContent = `Let go: ${t.text}`;
-    return;
-  }
 }
 
 function add(){
@@ -727,7 +318,7 @@ function add(){
   const t = { id: newId(), text, added: Date.now() };
   const prog = $('field-prog');
   if (prog && prog.value) t.program = prog.value;
-  state.backlog.unshift(t);
+  state.ready.unshift(t);
   field.value = '';
   if (prog) prog.value = '';
   field.focus();
@@ -740,29 +331,24 @@ const listLines = text => text.split(/\r?\n/)
   .map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim())
   .filter(line => line && !line.endsWith(':'));
 
-// Paste several tasks into the task field — one per line (a list Claude
-// hands over: N.'s ready steps, `dashboard.py --tasks`). Each lands on the
-// backlog; a task already on Now or the backlog (any case) is not added
-// twice. A one-line paste is an ordinary paste.
+// Several lines pasted into the task field: one Ready task each, in the
+// list's order; one already open (any case) is not added twice.
 function pasteTasks(e){
   const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
   if (!/\n/.test(text.trim())) return;
   e.preventDefault();
-  const have = new Set([...state.active, ...state.backlog].map(t => t.text.toLowerCase()));
+  const have = new Set([...state.ready, ...state.icebox].map(t => t.text.toLowerCase()));
   const fresh = [];
   for (const line of listLines(text)){
     if (have.has(line.toLowerCase())) continue;
     have.add(line.toLowerCase());
     fresh.push({ id: newId(), text: line, added: Date.now() });
   }
-  state.backlog.unshift(...fresh);   // on top, in the list's order
-  const n = fresh.length;
+  state.ready.unshift(...fresh);
   render(); save();
-  $('status').textContent = `${n} task${n === 1 ? '' : 's'} added from the list.`;
+  $('status').textContent = `${plural(fresh.length, 'task')} added from the list.`;
 }
 
-// Add one program, or paste several (listLines); a name already on the
-// list (any case) is not added twice.
 function addPrograms(){
   const field = $('prog-field');
   const have = new Set(state.programs.map(p => p.name.toLowerCase()));
@@ -775,69 +361,26 @@ function addPrograms(){
   render(); save();
 }
 
-function findTask(id){
-  return state.active.find(t => t.id === id) || state.backlog.find(t => t.id === id);
-}
-// The group a step belongs to, and the step.
-function findStep(sid){
-  for (const t of state.active.concat(state.backlog)){
-    const s = hasSteps(t) && t.steps.find(x => x.id === sid);
-    if (s) return { t, s };
-  }
-  return null;
-}
-
-// Steps typed one per line join the end of the task's steps.
-function saveSteps(id){
-  const t = findTask(id);
-  const lines = listLines($('steps-field').value);
-  if (t && !t.kairos && lines.length) t.steps = (t.steps || []).concat(lines.map(text => ({ id: newId(), text })));
-  stepsOpen = null;
-  $('steps-field').value = '';
+// Ready to the top of the Icebox, or the Icebox to the top of Ready.
+function move(id, from, to){
+  const i = state[from].findIndex(t => t.id === id);
+  if (i < 0) return;
+  const [t] = state[from].splice(i, 1);
+  state[to].unshift(t);
   render(); save();
 }
 
-// A step ticked on Now: checked off inside the group, and the five days
-// start over; the last open one completes the group.
-function tickStep(sid){
-  const hit = findStep(sid);
-  if (!hit || hit.s.done || !state.active.includes(hit.t)) return;
-  hit.s.done = Date.now();
-  hit.t.since = Date.now();
-  render(); save();
-  if (hit.t.steps.every(s => s.done)) complete(hit.t.id);
-}
-
-// Copy a task to paste elsewhere (into Claude, to plan or resolve it): the
-// text, and for a task on Now a second line saying how long it has sat
-// there.
-function taskText(t){
-  return (state.active.includes(t) ? `${t.text}\nOn the Whiteboard's Now list for ${age(t)}.` : t.text) + stepLines(t);
-}
-function copyTask(id, btn){
-  const t = findTask(id);
-  if (!t) return;
-  const text = taskText(t);
-  const did = () => {
-    btn.textContent = 'copied'; btn.classList.add('did');
-    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('did'); }, 1200);
-  };
-  clip(text, did, () => { $('status').textContent = 'Could not copy — select the text and copy it by hand.'; });
-}
-
-// Tap a task's text to edit it in place. Enter or tapping away saves; Escape
-// or an empty field leaves the original text untouched. Editing never deletes.
+// Tap a task's text (or a program's name) to edit it in place. Enter or
+// tapping away saves; Escape or an empty field keeps the original.
 function startEdit(span){
-  // A program's name is edited the same way as a task's text (rename only —
-  // there is no removing a program, as there is no deleting a task).
   const t = span.dataset.progEdit
     ? { get text(){ return this.p.name; }, set text(v){ this.p.name = v; }, p: state.programs.find(p => p.id === span.dataset.progEdit) }
-    : span.dataset.stepEdit ? findStep(span.dataset.stepEdit).s
-    : findTask(span.dataset.edit);
+    : state.ready.find(x => x.id === span.dataset.edit);
+  if (!t) return;
   const input = document.createElement('input');
   input.className = 'edit';
   input.value = t.text;
-  input.setAttribute('aria-label', 'Edit task');
+  input.setAttribute('aria-label', 'Edit');
   let finished = false;
   const finish = commit => {
     if (finished) return;
@@ -853,25 +396,22 @@ function startEdit(span){
   input.addEventListener('blur', () => finish(true));
   span.replaceWith(input);
   input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
 }
 
-// Ticking a task is completion: the tick draws, the row fades, and the task
-// leaves the board for the archive, stamped with when — kept, never shown on
-// the board again. There is no undo.
+// Ticking a task completes it: the tick draws, the row fades, and it goes to
+// the archive, stamped with when. There is no undo.
 function complete(id){
-  const row = document.querySelector(`[data-row="${id}"]`);
+  const row = document.querySelector(`#ready [data-row="${id}"]`);
+  if (!row) return;
   row.classList.add('done');
   row.querySelector('[data-done]').disabled = true;
   setTimeout(() => {
-    const i = state.active.findIndex(t => t.id === id);
+    const i = state.ready.findIndex(t => t.id === id);
     if (i < 0) return;
-    const [t] = state.active.splice(i, 1);
-    delete t.since;
+    const [t] = state.ready.splice(i, 1);
     t.done = Date.now();
     state.archive.unshift(t);
     render(); save();
-    if (t.kairos){ writeKey(TICKS_KEY, [...pendingTicks(), t.kairos]); kairosRefresh(); }
   }, 480);
 }
 
@@ -880,70 +420,23 @@ $('field').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); add(); }
 });
 $('field').addEventListener('paste', pasteTasks);
-
 $('prog-add').addEventListener('click', addPrograms);
 $('prog-field').addEventListener('keydown', e => {
-  // Enter adds; Shift+Enter (or a paste) makes a new line for several at once.
   if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); addPrograms(); }
-});
-document.addEventListener('change', e => {
-  const size = e.target.closest('[data-size],[data-step-size]');
-  if (size){
-    const t = size.dataset.size ? findTask(size.dataset.size) : (findStep(size.dataset.stepSize) || {}).s;
-    if (!t) return;
-    if (size.value) t.size = size.value; else delete t.size;
-    render(); save();
-    return;
-  }
-  const sel = e.target.closest('[data-prog]');
-  if (!sel) return;
-  const t = findTask(sel.dataset.prog);
-  if (!t) return;
-  if (sel.value) t.program = sel.value; else delete t.program;
-  render(); save();
 });
 
 document.addEventListener('click', e => {
-  const push = e.target.closest('[data-push]');
-  if (push && openCount() < 7){
-    const i = state.backlog.findIndex(t => t.id === push.dataset.push);
-    const [t] = state.backlog.splice(i, 1);
-    t.since = Date.now();
-    state.active.push(t);
-    render(); save();
-    return;
-  }
-  const haveBtn = e.target.closest('[data-have]');
-  if (haveBtn){ have = have === haveBtn.dataset.have ? null : haveBtn.dataset.have; render(); return; }
-  const stepDone = e.target.closest('[data-step-done]');
-  if (stepDone){ tickStep(stepDone.dataset.stepDone); return; }
-  const stepsBtn = e.target.closest('[data-steps]');
-  if (stepsBtn){ stepsOpen = stepsBtn.dataset.steps; render(); $('steps-field').focus(); return; }
-  const stepsSave = e.target.closest('[data-steps-save]');
-  if (stepsSave){ saveSteps(stepsSave.dataset.stepsSave); return; }
   const done = e.target.closest('[data-done]');
   if (done && !done.disabled){ complete(done.dataset.done); return; }
-  const talkBtn = e.target.closest('[data-talk]');
-  if (talkBtn){ talk(talkBtn.dataset.talk, talkBtn); return; }
-  const blocked = e.target.closest('[data-blocked]');
-  if (blocked){ block(blocked.dataset.blocked); return; }
-  const go = e.target.closest('[data-letgo]');
-  if (go){ letGo(go.dataset.letgo); return; }
-  const copy = e.target.closest('[data-copy]');
-  if (copy){ copyTask(copy.dataset.copy, copy); return; }
-  if (e.target.id === 'export'){ exportOpen = true; render(); return; }
-  if (e.target.id === 'export-close'){ exportOpen = false; render(); return; }
-  if (e.target.id === 'export-copy'){ copyExport(); return; }
-  const edit = e.target.closest('[data-edit],[data-prog-edit],[data-step-edit]');
+  const ice = e.target.closest('[data-ice]');
+  if (ice){ move(ice.dataset.ice, 'ready', 'icebox'); return; }
+  const unice = e.target.closest('[data-unice]');
+  if (unice){ move(unice.dataset.unice, 'icebox', 'ready'); return; }
+  const edit = e.target.closest('[data-edit],[data-prog-edit]');
   if (edit) startEdit(edit);
 });
 
 load();
-kairosRefresh();
-$('kairos-save').addEventListener('click', kairosConnect);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible'){ sweepNow(); kairosRefresh(); }
-});
 // updateViaCache:'none' keeps the HTTP cache out of sw.js checks, and every
 // return to the foreground forces one — belt and braces for WebViews that
 // skip the automatic re-check.
